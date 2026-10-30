@@ -1,0 +1,6 @@
+[package]
+name = "nft-browser"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

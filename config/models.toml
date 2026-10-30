@@ -1,0 +1,20 @@
+# models.toml — registry model LLM (blueprint §F7)
+# Semua endpoint OpenAI-compatible (Claude/GPT/Ollama/custom).
+# Kredensial HANYA via nama env var (api_key_env) — token tidak pernah ditulis di file ini.
+
+default = "planner-large"
+plan_timeout_secs = 3                    # LLM tidak boleh berada di jalur eksekusi mint (§8.2 poin 3)
+
+[[model]]
+id = "planner-large"                     # model besar untuk perencanaan / bahasa natural
+base_url_env = "NFT_LLM_PLANNER_URL"
+api_key_env = "NFT_LLM_PLANNER_KEY"
+model_name = "claude-sonnet-4-5"
+max_tokens = 2048
+
+[[model]]
+id = "chat-local"                        # model lokal murah untuk chat biasa
+base_url_env = "NFT_LLM_CHAT_URL"
+api_key_env = "NFT_LLM_CHAT_KEY"
+model_name = "llama-3.1-8b"
+max_tokens = 1024

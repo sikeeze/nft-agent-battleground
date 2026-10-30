@@ -1,0 +1,55 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+# --- shared ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+thiserror = "2"
+zeroize = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+mimalloc = "0.1"
+sqlx = { version = "0.8", default-features = false, features = [
+    "sqlite",
+    "runtime-tokio",
+    "macros",
+    "migrate",
+]}
+tempfile = "3"
+rand = { version = "0.8", features = ["std", "std_rng"] }
+
+# --- Fase 2 (Hari 4-7): keystore, signer, policy ---
+# alasan: keystore terenkripsi Argon2id+XChaCha20 sesuai blueprint §F4/§3A
+# alasan: signing tx + personal_sign + EIP-712 via alloy secp256k1 (§F3)
+# alasan: policy engine yang menolak intent di luar batas & memungkinkan ApprovedTx-only signing (§F5)
+# consensus: tipe tx (legacy/1559) + Signed + TxEnvelope di nft-signer (§F3)
+# sol-types: EIP-712 typed-data signing di nft-signer (§F3)
+# eip712: sign_typed_data_sync pada SignerSync (§F3)
+# k256: secp256k1 crypto backend (recover_signer + sign) — default alloy pakai k256
+alloy = { version = "2", default-features = false, features = [
+    "signer-local",
+    "consensus",
+    "sol-types",
+    "eip712",
+    "k256",
+] }
+# async-trait: hook konfirmasi manusia & Simulator trait async di nft-policy (§F5)
+async-trait = "0.1"
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+hex = "0.4"
+serde_bytes = "0.11"
+
+[profile.release]
+# §8.2 poin 10: build rilis dioptimalkan untuk latensi hot path
+lto = "fat"
+codegen-units = 1
+opt-level = 3

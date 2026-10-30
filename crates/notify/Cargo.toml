@@ -1,0 +1,6 @@
+[package]
+name = "nft-notify"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

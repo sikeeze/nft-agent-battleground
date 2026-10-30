@@ -1,0 +1,6 @@
+[package]
+name = "nft-skills"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

@@ -1,0 +1,22 @@
+[package]
+name = "nft-keystore"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+alloy = { workspace = true }
+argon2 = { workspace = true }
+chacha20poly1305 = { workspace = true }
+hex = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_bytes = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+zeroize = { workspace = true }
+
+# akses ke tipe domain (Secret<T>) dari core
+nft-core = { path = "../core", package = "nft-core" }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -1,0 +1,6 @@
+[package]
+name = "nft-market"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

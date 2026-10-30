@@ -1,0 +1,30 @@
+# agent.toml — konfigurasi umum agent (blueprint §1, §3C)
+#
+# WAJIB default dry-run: false hanya diubah setelah uji bertahap (§9 Fase 13).
+# Nilai di file ini bisa dioverride via file *.local.toml (di-gitignore).
+
+dry_run = true
+
+[notify]
+primary = "telegram"          # kanal kontrol tetap Telegram; WhatsApp hanya notifikasi satu arah
+critical_to_all = true        # event critical dikirim ke Telegram DAN WhatsApp
+quiet_hours = "23:00-06:00"   # critical tetap dikirim di jam tenang
+dedupe_window_sec = 120       # pesan serupa dalam window ini digabung
+
+[notify.whatsapp]
+enabled = true
+phone_number_id = "SET_PHONE_NUMBER_ID"   # dari Meta for Developers
+access_token_env = "WA_ACCESS_TOKEN"      # token di env/secret VPS, TIDAK di file ini
+recipient = "+62xxxxxxxxxx"               # nomor penerima yang terdaftar
+min_priority = "high"                     # hanya event high/critical ke WhatsApp
+max_per_hour = 20
+monthly_budget_msgs = 500
+
+[notify.whatsapp.templates]              # template utility yang disetujui Meta (daftarkan sejak awal)
+mint_result = "mint_result_v1"
+war_started = "war_started_v1"
+preflight_failed = "preflight_failed_v1"
+session_expired = "session_expired_v1"
+low_balance = "low_balance_v1"
+killswitch_triggered = "killswitch_v1"
+listing_sold = "listing_sold_v1"

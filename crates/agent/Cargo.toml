@@ -1,0 +1,7 @@
+[package]
+name = "nft-agent"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mimalloc.workspace = true

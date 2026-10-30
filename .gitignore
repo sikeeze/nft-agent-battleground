@@ -1,0 +1,9 @@
+/target
+/storage/*
+!storage/.gitkeep
+.env
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+config/*.local.toml

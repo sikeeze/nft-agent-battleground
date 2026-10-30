@@ -1,0 +1,6 @@
+[package]
+name = "nft-scheduler"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

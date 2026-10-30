@@ -1,0 +1,6 @@
+[package]
+name = "nft-chain"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

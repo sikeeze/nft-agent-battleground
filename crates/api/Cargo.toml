@@ -1,0 +1,6 @@
+[package]
+name = "nft-api"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

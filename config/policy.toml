@@ -1,0 +1,29 @@
+# policy.toml — policy engine (pengaman utama, blueprint §F5, §4)
+# LLM/skill hanya MENGAJUKAN Intent; semua batas di file ini yang memutuskan.
+
+[limits]
+max_spend_per_tx_eth = 0.5
+max_spend_per_day_eth = 2.0
+max_gas_gwei = 80
+allowed_chains = [1, 8453, 42161]        # Ethereum, Base, Arbitrum
+
+[allowlist]
+contracts = []                           # diisi saat ada kontrak tepercaya
+block_unlimited_approvals = true         # wajib true: blokir setApprovalForAll / approve ke max
+
+[confirmation]
+require_human_above_eth = 0.2
+require_human_for = ["new_contract", "new_collection", "withdraw"]
+
+[kill_switch]
+auto_trigger_on_loss_eth = 1.0
+
+[telegram]
+allowed_user_ids = [123456789]           # whitelist user_id (BUKAN username)
+chat_cannot = ["edit_policy", "export_key"]
+import_via_chat = true                   # hanya wallet burner, alur §3A
+import_session_timeout_sec = 120
+delete_import_message = true             # pesan /import langsung dihapus oleh bot
+require_totp_for_import = true
+burner_max_balance_eth = 0.5             # import ditolak bila saldo melebihi ini
+max_wallets = 5
