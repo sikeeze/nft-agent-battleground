@@ -10,3 +10,4 @@ config/*.local.toml
 # foundry binary release + cache ( ditaruh repo-local, lihat NEXT_AGENT.md )
 /.foundry/
 /cache/
+/out/

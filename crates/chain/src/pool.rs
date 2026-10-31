@@ -30,6 +30,8 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, warn};
 
+use alloy::primitives::U256;
+
 /// Error dari RPC pool.
 #[derive(Debug, Error)]
 pub enum RpcError {
@@ -369,6 +371,34 @@ impl RpcPool {
     /// `poll_interval_ms`. Channel `u64` = block number.
     pub async fn new_heads(&self) -> NewHeads {
         NewHeads::start(self.clone()).await
+    }
+
+    /// `eth_getBalance` — saldo ETH sebuah address ( wei ), blok `latest`.
+    /// Dipakai preflight ( §6.1 "Saldo >= harga x qty + gas cadangan 30%" ).
+    pub async fn eth_get_balance(&self, address: &str) -> Result<U256, RpcError> {
+        let res: String = self
+            .request("eth_getBalance", &serde_json::json!([address, "latest"]))
+            .await?;
+        let hex = res.trim_start_matches("0x");
+        U256::from_str_radix(hex, 16)
+            .map_err(|e| RpcError::BadResponse(format!("parse balance {res}: {e}")))
+    }
+}
+
+#[cfg(test)]
+mod balance_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn eth_get_balance_endpoint_mati_error_jelas() {
+        let pool = RpcPool::new(RpcPoolConfig {
+            http_urls: vec!["http://127.0.0.1:9".into()],
+            request_timeout_ms: 300,
+            ..Default::default()
+        })
+        .unwrap();
+        let res = pool.eth_get_balance("0x").await;
+        assert!(res.is_err(), "endpoint mati harus error, dapat: {res:?}");
     }
 }
 

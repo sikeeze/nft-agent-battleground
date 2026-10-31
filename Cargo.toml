@@ -86,6 +86,12 @@ teloxide = { version = "0.15", default-features = false, features = [
 # alur /import (§3 poin 5, §3A "Aksi ini juga minta TOTP kalau aktif").
 totp-rs = { version = "5", features = ["gen_secret", "zeroize"] }
 
+# --- Fase 6 (Hari 22-27): linkresolver, preflight ---
+# url: parsing URL link mint (§5 "Mint Hanya dengan Link") — crate kecil
+# untuk normalisasi domain/jalur sebelum handler platform.
+url = "2"
+
+
 [profile.release]
 # §8.2 poin 10: build rilis dioptimalkan untuk latensi hot path
 lto = "fat"

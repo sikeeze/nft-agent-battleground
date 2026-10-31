@@ -49,9 +49,12 @@ pub struct BotState {
     pub admin_chat: ChatId,
     pub db: sqlx::SqlitePool,
     /// State policy ( kill switch ). `/stop` memicu kill switch di sini
-    /// ( §F5: "/stop mematikan semua job dan signer" ). `None` bila policy
+    /// ( ��F5: "/stop mematikan semua job dan signer" ). `None` bila policy
     /// engine belum dirakit ( mis. saat test ).
     pub policy_state: Option<std::sync::Arc<dyn nft_policy::PolicyState + Send + Sync>>,
+    /// RPC pool chain target ( dari `chain.toml` ). `None` bila belum
+    /// dikonfigurasi — perintah /mint & /war akan menolak dengan jelas.
+    pub rpc: Option<nft_chain::RpcPool>,
 }
 
 /// Rakitan perintah masuk a+' `QueuedCommand` ( atau None bila invalid ).
@@ -82,7 +85,7 @@ fn make_command(msg: &Message, enabled_commands: &[&str]) -> Option<QueuedComman
 }
 
 /// Daftar perintah yang dikenal ( parse tanpa LLM, §8.2 poin 3 ).
-pub const ENABLED_COMMANDS: [&str; 7] = [
+pub const ENABLED_COMMANDS: [&str; 10] = [
     "/status",
     "/stop",
     "/import",
@@ -90,6 +93,9 @@ pub const ENABLED_COMMANDS: [&str; 7] = [
     "/wallets",
     "/approve",
     "/reject",
+    "/mint",
+    "/preflight",
+    "/war",
 ];
 
 /// Proses satu pesan masuk ( hot path: validasi + ack + enqueue ).
@@ -371,6 +377,68 @@ pub async fn process_command(state: &BotState, cmd: QueuedCommand) -> CommandRes
                 silent,
             }
         }
+        "/mint" | "/war" => {
+            // §5 Link-to-Mint: resolve -> verify on-chain -> rencana +
+            // peringatan risiko. Eksekusi tetap lewat konfirmasi tombol.
+            let Some(link) = cmd.args.as_deref() else {
+                return CommandResult {
+                    command: cmd.command,
+                    chat_id,
+                    text: "Pakai: /mint <link> ( mis. https://opensea.io/drop/xyz )".into(),
+                    silent,
+                };
+            };
+            let Some(rpc) = state.rpc.as_ref() else {
+                return CommandResult {
+                    command: cmd.command,
+                    chat_id,
+                    text: "[X] RPC chain belum dikonfigurasi ( chain.toml ).".into(),
+                    silent,
+                };
+            };
+            let wallets: Vec<nft_core::wallet::WalletRef> = state
+                .keystore
+                .lock()
+                .await
+                .wallets()
+                .iter()
+                .map(|w| {
+                    nft_core::wallet::WalletRef::new(
+                        w.id.clone(),
+                        w.label.clone(),
+                        w.address.clone(),
+                    )
+                })
+                .collect();
+            let outcome = crate::mintcommand::handle_mint_link(link, rpc, &wallets).await;
+            let _ = audit(
+                &state.db,
+                &user_id.to_string(),
+                &cmd.command,
+                Some(&outcome.text.chars().take(64).collect::<String>()),
+                None,
+            )
+            .await;
+            CommandResult {
+                command: cmd.command,
+                chat_id,
+                text: outcome.text,
+                silent,
+            }
+        }
+        "/preflight" => {
+            // §6.1: /preflight <task> — V1: tampilkan info cara pakai.
+            // ( preflight otomatis dijalankan saat /war dikonfirmasi )
+            CommandResult {
+                command: cmd.command,
+                chat_id,
+                text: "Preflight (§6.1) otomatis: T-10 menit & T-1 menit \
+                       sebelum trigger. Pakai /war <link> untuk menyiapkan \
+                       war ( resolve + verify + preflight )."
+                    .into(),
+                silent,
+            }
+        }
         _ => CommandResult {
             command: cmd.command,
             chat_id,
@@ -629,6 +697,7 @@ mod tests {
             admin_chat: ChatId(123456789),
             db,
             policy_state,
+            rpc: None,
         });
         (st, dir)
     }

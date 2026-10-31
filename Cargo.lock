@@ -3928,6 +3928,23 @@ dependencies = [
 [[package]]
 name = "nft-linkresolver"
 version = "0.1.0"
+dependencies = [
+ "alloy",
+ "async-trait",
+ "hex",
+ "nft-chain",
+ "nft-core",
+ "nft-mint",
+ "nft-preflight",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+]
 
 [[package]]
 name = "nft-llm"
@@ -3984,6 +4001,22 @@ dependencies = [
 [[package]]
 name = "nft-preflight"
 version = "0.1.0"
+dependencies = [
+ "alloy",
+ "async-trait",
+ "chrono",
+ "nft-chain",
+ "nft-core",
+ "nft-mint",
+ "nft-policy",
+ "nft-signer",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "nft-scheduler"
@@ -4017,7 +4050,10 @@ dependencies = [
  "nft-chain",
  "nft-core",
  "nft-keystore",
+ "nft-linkresolver",
+ "nft-mint",
  "nft-policy",
+ "nft-preflight",
  "nft-signer",
  "rand 0.8.8",
  "serde",
@@ -4029,6 +4065,7 @@ dependencies = [
  "tokio",
  "totp-rs",
  "tracing",
+ "url",
  "zeroize",
 ]
 

@@ -229,6 +229,73 @@
   6 mint integration + 54 telegram unit + 5 telegram integration ),
   0 gagal, 0 warning.
 
+### ✅ Fase 6 — Link-to-Mint, Preflight, Reliability: SELESAI, semua Acceptance lulus
+
+- **`crates/linkresolver`** ( 17 unit test + 3 integration test fork Anvil ):
+  - `resolve.rs` — `resolve_mint_link` universal ( §5 poin 1 ): ambil
+    halaman via `reqwest`, ekstrak alamat kontrak + chain id dari
+    JSON tersemat/og:meta. **Deteksi typosquat dini** ( §5 poin 4 ):
+    jarak edit 1 ke domain resmi / SLD sama-TLD beda / SLD mirip-TLD
+    resmi → `ResolveError` ( `open-sea.io`, `opensea.om`, `opnsea.io`
+    ditolak ). Platform detector: OpenSea/Zora/Manifold/mint.fun/
+    Magic Eden/Website. ponytail: handler API resmi per-platform
+    ( OpenSea Drops API, Zora API ) menyusul Fase 12.
+  - `verify.rs` — `verify_contract` ( §5 poin 2, on-chain deterministik ):
+    `eth_getCode` ( EOA → error ), deteksi proxy EIP-1967
+    `implementation()`, baca state via `nft_mint::sale::SaleReader`,
+    **skor risiko** ( §5 poin 4 ): `RiskLevel::Low/Medium/High/Critical`
+    dari bytecode — `setApprovalForAll` ( a22cb465 ) → High,
+    selfdestruct opcode 0xff → High, honeypot ( tanpa
+    transferFrom/safeTransferFrom ) → High, owner setPrice/
+    setSaleActive → Medium. `High`/`Critical` wajib konfirmasi
+    manusia ( `needs_human()` ); `Critical` dibatalkan otomatis.
+  - `plan.rs` — `build_mint_plan` ( §5 poin 3 ): qty per wallet =
+    `maxPerWallet` dipotong sisa supply; `summarize()` format
+    ringkasan Telegram ( Koleksi/Harga/Limit/Supply/Wallet/Gas/Risiko ).
+- **`crates/preflight`** ( 6 unit test ) — `preflight()` 10 cek §6.1:
+  Saldo ( `eth_getBalance` + gas cadangan 30% ), Nonce ( lokal vs
+  on-chain pending ), RPC ( >= 3 sehat + selisih block ), Jam ( drift
+  vs block timestamp; chrony host wajib ), Simulasi ( `EthCallSimulator`
+  per wallet ), Allowlist ( V1: lolos bila tak ada merkle — Fase 12 ),
+  Limit, Gas ( maxFee < cap + margin 10% ), Login ( Fase 7 ),
+  Policy. `PreflightReport::summarize()` → checklist `[OK]`/`[X]`;
+  **merah → war tidak otomatis** ( §6.1 ). `schedule_automatic` T-10m/
+  T-1m ( scheduler penuh Fase 10 ).
+- **Wiring Telegram** ( `crates/telegram/src/mintcommand.rs`, 3 test ):
+  perintah `/mint <link>`, `/war <link>`, `/preflight` masuk
+  `ENABLED_COMMANDS` + dispatch `process_command` ( bot.rs ).
+  `handle_mint_link` = resolve → verify → build_plan → ringkasan +
+  peringatan risiko; `BotState.rpc: Option<RpcPool>` ( None → pesan
+  jelas ). Eksekusi tetap lewat konfirmasi tombol + kill switch.
+- **`crates/chain/src/pool.rs`**: `eth_get_balance()` baru ( wei,
+  `eth_getBalance` latest ) — dipakai preflight.
+- Integration test ( `crates/linkresolver/tests/integration.rs` ) fork
+  Anvil: mock HTTP server menyajikan halaman drop; deploy
+  `TestNFT.sol` ( valid, dari crate mint ) + `DrainerNFT.sol`
+  ( berbahaya — `setApprovalForAll` ). Acceptance F6:
+  1. `acceptance_fase6_sepuluh_link_uji` — 5 link valid lolos
+     verifikasi lengkap ( price terbaca, plan terbentuk ), 5 bermasalah
+     diblokir ( typosquat, no-contract, drainer High, scheme invalid,
+     host mati ).
+  2. `acceptance_fase6_link_scam_tidak_jadi_tx` — DrainerNFT →
+     `RiskLevel::High` wajib konfirmasi ( tidak auto-eksekusi ).
+  3. `acceptance_fase6_preflight_merah_mencegah_war` — saldo 0 →
+     PREFLIGHT GAGAL.
+  Diskip otomatis bila Anvil tak terjangkau ( `NFT_SKIP_FORK_TESTS=1` );
+  jalankan `RUST_TEST_THREADS=1`.
+- Contract uji `crates/linkresolver/contracts/DrainerNFT.sol`.
+- Dep Fase 6 via `[workspace.dependencies]` ( aturan #9 ): **crate baru
+  `url` 2** ( parsing link, §5 ). Crate langsung: `nft-mint`,
+  `nft-chain`, `nft-preflight`, `nft-linkresolver` di telegram/
+  linkresolver/preflight.
+- **Verifikasi terakhir sukses**: `cargo fmt --all && cargo clippy
+  --all-targets -- -D warnings && RUST_TEST_THREADS=1 cargo test
+  --workspace` → **228 test hijau** ( 38 core + 11 keystore + 13 policy +
+  6 signer + 30 chain unit + 5 chain integration + 31 mint unit +
+  6 mint integration + 17 linkresolver unit + 3 linkresolver integration +
+  6 preflight + 57 telegram unit + 5 telegram integration ), 0 gagal,
+  0 warning.
+
 - Windows (Git Bash/MSYS), Rust toolchain `stable` terpasang (rustc 1.99).
 - Root proyek: `D:\nft agent battleground`.
 - RPC publik Sepolia & mainnet terjangkau dari mesin ini (publicnode, 1rpc).
@@ -265,25 +332,23 @@
     cargo clippy --all-targets -- -D warnings && cargo test --workspace`
     hijau → **lalu berhenti dan minta persetujuan user sebelum fase berikut.**
 
-## Target berikutnya: Fase 6 (Hari 22-27) — Link-to-Mint, Preflight, Reliability
+## Target berikutnya: Fase 7 (Hari 28-33) — Social Vault & Browser Worker
 
 Urutan pengerjaan yang disarankan:
 
-1. `crates/linkresolver`: handler OpenSea Drops, Zora, Manifold,
-   mint.fun (+ fallback website). `resolve_mint_link` ( §8.3, §5 poin 1 ).
-2. `verify_contract` ( §5 poin 2 ): kontrak ter-verifikasi di explorer,
-   deteksi proxy, skor risiko link ( domain typosquat, kontrak baru,
-   `setApprovalForAll`/`delegatecall` mencurigakan, honeypot ).
-3. `build_mint_plan` ( §5 poin 3 ) → ringkasan + tombol Konfirmasi di
-   Telegram ( `crates/telegram` ).
-4. `crates/preflight`: semua cek di §6.1 ( saldo >= harga x qty + gas
-   cadangan 30%, nonce lokal = on-chain, >= 3 RPC sehat, offset jam,
-   simulasi, allowlist/merkle proof, limit, gas di bawah cap, sesi login,
-   policy ) — jadwal otomatis T-10 menit dan T-1 menit, `/preflight`.
-5. Acceptance Fase 6 ( blueprint §9 ): 10 link uji ( benar +
-   scam/typosquat ) diproses benar; link scam tidak pernah jadi tx;
-   preflight merah blokir war; kegagalan disimulasikan ( RPC down, nonce
-   nyangkut, saldo kurang ) tertangani sesuai tabel §6.2.
+1. `crates/vault`: simpan storage state terenkripsi ( file-based, bukan
+   SQLite ), `/accounts add|check|remove`, remote browser via Tailscale
+   untuk login manual ( termasuk 2FA ).
+2. `crates/browser`: Chromium ( `chromiumoxide` ) per profil terisolasi,
+   provider EIP-1193 dengan **semua sign request lewat Policy Engine**
+   ( aturan keras #2 ), parser SIWE ( cek domain/nonce ).
+3. `session_health` + notifikasi sebelum sesi mati ( `nft_notify` );
+   berhenti dan minta user bila ada captcha/2FA ( aturan keras #5 ).
+4. Sambungkan ke preflight §6.1 cek "Login" ( sekarang placeholder ).
+5. Acceptance Fase 7 ( blueprint §9 ): login Google/X tidak menyimpan
+   password mentah; sesi tetap valid setelah restart; permintaan sign
+   dari halaman uji berisi `setApprovalForAll` ke alamat asing ditolak;
+   SIWE dengan domain tidak cocok ditolak; tidak ada kode solver captcha.
 
 ## Checklist Acceptance tiap fase (ringkas, dari §9)
 
@@ -303,7 +368,7 @@ Urutan pengerjaan yang disarankan:
   ( `acceptance_fase5_mint_terjadi_dalam_satu_block` — tx masuk block & balanceOf/ownerOf
   terverifikasi; idempotency key menolak dobel eksekusi; `MintTxStatus::DryRun` tidak
   mengirim. )
-- F6 — 10 link uji diproses benar; link scam tidak pernah jadi tx; preflight merah blokir war.
+- F6 ✅ — 10 link uji diproses benar; link scam tidak pernah jadi tx; preflight merah blokir war.
 - F7 — tanpa password mentah; sign setApprovalForAll asing ditolak; SIWE domain salah ditolak.
 - F8 — rule buy/list end-to-end testnet; PnL benar 3 skenario.
 - F9 — ganti model tanpa ubah kode; prompt injection tidak menghasilkan intent berbahaya.

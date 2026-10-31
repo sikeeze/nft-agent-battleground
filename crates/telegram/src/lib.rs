@@ -18,6 +18,7 @@ pub mod bot;
 pub mod confirm;
 pub mod engine;
 pub mod import;
+pub mod mintcommand;
 pub mod notify;
 pub mod queue;
 
