@@ -34,19 +34,57 @@ rand = { version = "0.8", features = ["std", "std_rng"] }
 # sol-types: EIP-712 typed-data signing di nft-signer (§F3)
 # eip712: sign_typed_data_sync pada SignerSync (§F3)
 # k256: secp256k1 crypto backend (recover_signer + sign) — default alloy pakai k256
-alloy = { version = "2", default-features = false, features = [
-    "signer-local",
-    "consensus",
-    "sol-types",
-    "eip712",
-    "k256",
-] }
+# alloy didefinisikan sekali di bawah (Fase 3 menambahkan feature chain layer)
 # async-trait: hook konfirmasi manusia & Simulator trait async di nft-policy (§F5)
 async-trait = "0.1"
 argon2 = "0.5"
 chacha20poly1305 = "0.10"
 hex = "0.4"
 serde_bytes = "0.11"
+
+# --- Fase 3 (Hari 8-11): chain layer ---
+# reqwest: klien HTTP/2 koneksi persisten + connection pool untuk RPC (§8.2 poin 5)
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+    "http2",
+] }
+# tokio-tungstenite: WebSocket newHeads, koneksi persisten + reconnect (§8.2 poin 4-5)
+tokio-tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
+# futures-util: Stream/Sink untuk WebSocket newHeads stream
+futures-util = "0.3"
+# alloy chain deps: provider WS/HTTP + RPC types + contract call untuk
+# simulator eth_call dan gas EIP-1559 (§9 Fase 3). Tambahan features pada
+# alloy yang sudah ada (aturan #9: tidak ada crate baru, hanya feature flags).
+alloy = { version = "2", default-features = false, features = [
+    "signer-local",
+    "consensus",
+    "sol-types",
+    "eip712",
+    "k256",
+    "provider-http",
+    "provider-ws",
+    "rpc-types-eth",
+    "rpc-client",
+    "eips",
+    "serde",
+    "rlp",
+    # signer-mnemonic: derivasi mnemonic BIP-39 untuk /import (§3A — agent
+    # hanya menurunkan path tunggal m/44'/60'/0'/0/0; butuh coins-bip39).
+    "signer-mnemonic",
+] }
+
+# --- Fase 4 (Hari 12-16): telegram ---
+# teloxide: Telegram Bot framework resmi (§1 "Kanal kontrol: Telegram Bot",
+# §F6 "Kontrol via Telegram") — dispatcher, dialog, inline keyboard.
+teloxide = { version = "0.15", default-features = false, features = [
+    "rustls",
+    "ctrlc_handler",
+    "macros",
+] }
+# totp-rs: TOTP lapis kedua untuk konfirmasi di atas nominal tertentu dan
+# alur /import (§3 poin 5, §3A "Aksi ini juga minta TOTP kalau aktif").
+totp-rs = { version = "5", features = ["gen_secret", "zeroize"] }
 
 [profile.release]
 # §8.2 poin 10: build rilis dioptimalkan untuk latensi hot path

@@ -16,6 +16,7 @@ use crate::event::Priority;
 pub const AGENT_FILE: &str = "agent.toml";
 pub const POLICY_FILE: &str = "policy.toml";
 pub const MODELS_FILE: &str = "models.toml";
+pub const CHAIN_FILE: &str = "chain.toml";
 
 /// Template WhatsApp utility yang wajib terdaftar bila WhatsApp aktif (§3C poin 3).
 const REQUIRED_WHATSAPP_TEMPLATES: [&str; 7] = [
@@ -405,6 +406,98 @@ impl ModelsConfig {
 }
 
 // ---------------------------------------------------------------------------
+// chain.toml
+// ---------------------------------------------------------------------------
+
+/// Konfigurasi chain layer ( RPC pool, gas, relay ) — blueprint §9 Fase 3,
+/// §8.2 poin 5-6. Tiap chain punya daftar endpoint sendiri ( §6.1: idealnya
+/// >= 3 endpoint sehat per chain ).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChainConfig {
+    /// Chain id jaringan ( mis. 1 = Ethereum mainnet, 8453 = Base ).
+    pub chain_id: u64,
+    /// Daftar URL HTTP(S) JSON-RPC, urutan = prioritas.
+    pub rpc_urls: Vec<String>,
+    /// Daftar URL WebSocket untuk `newHeads` ( opsional ).
+    #[serde(default)]
+    pub ws_urls: Vec<String>,
+    /// URL relay privat untuk bundle ( Flashbots Protect / MEV-Blocker ).
+    /// Opsional; bila kosong memakai default internal broadcaster.
+    #[serde(default)]
+    pub relay_url: Option<String>,
+    /// Tunggu provider pertama seberapa lama sebelum hedging ( §8.2 poin 6 ).
+    #[serde(default = "d_hedge_delay")]
+    pub hedge_delay_ms: u64,
+    /// Timeout mutlak satu request RPC.
+    #[serde(default = "d_request_timeout")]
+    pub request_timeout_ms: u64,
+    /// Cooldown provider gagal sebelum dicoba lagi.
+    #[serde(default = "d_unhealthy_cooldown")]
+    pub unhealthy_cooldown_ms: u64,
+}
+
+fn d_hedge_delay() -> u64 {
+    250
+}
+fn d_request_timeout() -> u64 {
+    8_000
+}
+fn d_unhealthy_cooldown() -> u64 {
+    5_000
+}
+
+impl ChainConfig {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        let f = CHAIN_FILE;
+        if self.chain_id == 0 {
+            return Err(val_err(f, "chain_id harus != 0"));
+        }
+        if self.rpc_urls.is_empty() {
+            return Err(val_err(
+                f,
+                format!(
+                    "rpc_urls tidak boleh kosong ( chain {} — §6.1: gunakan minimal 3 endpoint )",
+                    self.chain_id
+                ),
+            ));
+        }
+        if self.hedge_delay_ms == 0 {
+            return Err(val_err(
+                f,
+                "hedge_delay_ms harus >= 1 ( hedged request, §8.2 poin 6 )",
+            ));
+        }
+        if self.request_timeout_ms < 100 {
+            return Err(val_err(f, "request_timeout_ms harus >= 100 ms"));
+        }
+        if self.unhealthy_cooldown_ms == 0 {
+            return Err(val_err(f, "unhealthy_cooldown_ms harus >= 1"));
+        }
+        // ws_urls opsional; bila ada harus format wss:// ( koneksi persisten ).
+        for u in &self.ws_urls {
+            if !u.starts_with("wss://") && !u.starts_with("ws://") {
+                return Err(val_err(
+                    f,
+                    format!("ws_urls berisi URL non-WebSocket: {u} ( harus ws:// atau wss:// )"),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn parse_chain(input: &str) -> Result<ChainConfig, ConfigError> {
+    let c: ChainConfig = toml::from_str(input).map_err(|e| parse_err(CHAIN_FILE, e))?;
+    c.validate()?;
+    Ok(c)
+}
+
+pub fn load_chain(path: &Path) -> Result<ChainConfig, ConfigError> {
+    parse_chain(&read_file(path)?)
+}
+
+// ---------------------------------------------------------------------------
 // Loader
 // ---------------------------------------------------------------------------
 
@@ -690,5 +783,65 @@ mod tests {
             err.to_string().contains("gagal membaca"),
             "pesan harus jelas, dapat: {err}"
         );
+    }
+
+    // --- chain.toml ( Fase 3 ) ------------------------------------------------
+
+    const CHAIN_OK: &str = r#"
+        chain_id = 8453
+        rpc_urls = ["https://mainnet.base.xyz", "https://base.publicnode.com"]
+        ws_urls = ["wss://base.publicnode.com"]
+        relay_url = "https://rpc-flashbots.flashbots.net"
+        hedge_delay_ms = 250
+        request_timeout_ms = 8000
+        unhealthy_cooldown_ms = 5000
+    "#;
+
+    #[test]
+    fn chain_config_valid_diterima() {
+        let c = parse_chain(CHAIN_OK).unwrap();
+        assert_eq!(c.chain_id, 8453);
+        assert_eq!(c.rpc_urls.len(), 2);
+        assert!(c.relay_url.is_some());
+    }
+
+    #[test]
+    fn chain_tanpa_rpc_ditolak() {
+        let bad = CHAIN_OK.replace(
+            "rpc_urls = [\"https://mainnet.base.xyz\", \"https://base.publicnode.com\"]",
+            "rpc_urls = []",
+        );
+        let err = parse_chain(&bad).unwrap_err();
+        assert!(err.to_string().contains("rpc_urls"));
+    }
+
+    #[test]
+    fn chain_id_nol_ditolak() {
+        let bad = CHAIN_OK.replace("chain_id = 8453", "chain_id = 0");
+        assert!(parse_chain(&bad).is_err());
+    }
+
+    #[test]
+    fn chain_ws_url_non_ws_ditolak() {
+        let bad = CHAIN_OK.replace(
+            "ws_urls = [\"wss://base.publicnode.com\"]",
+            "ws_urls = [\"https://bukan-ws\"]",
+        );
+        let err = parse_chain(&bad).unwrap_err();
+        assert!(err.to_string().contains("non-WebSocket"));
+    }
+
+    #[test]
+    fn chain_field_tidak_dikenal_ditolak() {
+        let bad = CHAIN_OK.replace("chain_id = 8453", "chain_id = 8453\ntypo = 1");
+        let err = parse_chain(&bad).unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("unknown field"));
+    }
+
+    #[test]
+    fn chain_hedge_delay_nol_ditolak() {
+        let bad = CHAIN_OK.replace("hedge_delay_ms = 250", "hedge_delay_ms = 0");
+        let err = parse_chain(&bad).unwrap_err();
+        assert!(err.to_string().contains("hedge_delay_ms"));
     }
 }

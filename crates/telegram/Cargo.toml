@@ -4,3 +4,25 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+nft-core = { path = "../core", package = "nft-core" }
+nft-policy = { path = "../policy", package = "nft-policy" }
+nft-keystore = { path = "../keystore", package = "nft-keystore" }
+nft-signer = { path = "../signer", package = "nft-signer" }
+nft-chain = { path = "../chain", package = "nft-chain" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+async-trait = { workspace = true }
+teloxide = { workspace = true }
+totp-rs = { workspace = true }
+alloy = { workspace = true }
+tracing = "0.1"
+rand = { workspace = true }
+zeroize = { workspace = true }
+chrono = { workspace = true }
+sqlx = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

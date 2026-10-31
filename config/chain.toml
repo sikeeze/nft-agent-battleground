@@ -1,0 +1,27 @@
+# chain.toml — konfigurasi chain layer (blueprint §9 Fase 3, §8.2)
+#
+# Endpoint RPC per chain. §6.1: gunakan minimal 3 endpoint sehat supaya
+# pool tetap可用 saat salah satu down (failover + hedged request).
+# Urutan rpc_urls = prioritas; cadangan otomatis dipakai untuk hedging.
+
+chain_id = 8453
+
+# Base mainnet (contoh). Ganti dengan chain yang dipakai (lihat policy.toml
+# limits.allowed_chains).
+rpc_urls = [
+    "https://mainnet.base.xyz",
+    "https://base.publicnode.com",
+    "https://base.drpc.org",
+]
+
+# WebSocket untuk trigger newHeads (opsional; bila kosong → polling).
+ws_urls = ["wss://base.publicnode.com"]
+
+# Relay privat untuk bundle mint (Flashbots Protect / MEV-Blocker).
+relay_url = "https://rpc-flashbots.flashbots.net"
+
+# Hedged request (§8.2 poin 6): kirim ke cadangan bila utama belum selesai.
+hedge_delay_ms = 250
+
+request_timeout_ms = 8000
+unhealthy_cooldown_ms = 5000

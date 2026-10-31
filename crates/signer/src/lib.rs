@@ -144,6 +144,17 @@ impl ApprovedTx {
         U256::from_str_radix(&self.value, 10).expect("nilai divalidasi saat konstruksi")
     }
 
+    /// Data calldata dalam hex dengan prefix `0x` ( untuk `eth_call` simulator
+    /// & broadcaster Fase 3/5 ).
+    pub fn data_hex(&self) -> &str {
+        &self.data
+    }
+
+    /// Nonce tx ( untuk nonce manager & broadcaster ).
+    pub fn nonce(&self) -> u64 {
+        self.nonce
+    }
+
     pub fn gas_limit(&self) -> u64 {
         self.gas_limit
     }
