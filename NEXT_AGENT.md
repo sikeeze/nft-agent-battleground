@@ -4,7 +4,36 @@
 > Baca file blueprint itu **penuh** dulu — terutama §3 (keamanan), §6 (reliability),
 > §9 (jadwal fase), dan §11 (prompt awal + aturan keras).
 
-## Status proyek (per 2026-10-31)
+## Status proyek (per 2026-11-01, akhir sesi Fase 8)
+
+> **Catatan singkat untuk agent berikutnya**: Fase 1-9 sudah selesai dan
+> hijau. Fase 10 (REST API & Scheduler) adalah target berikutnya —
+> **wajib minta persetujuan user dulu** sebelum mengerjakannya (aturan keras
+> #10). Semua commit belum dilakukan (working tree bersih di branch
+> `fix/claim-validation`); user belum meminta commit.
+
+### Lingkungan & cara verifikasi (WAJIB baca)
+
+- OS Windows, PowerShell 5.1. Rust stable 1.99. Root proyek: `D:\nft agent battleground`.
+- Selalu jalankan dari root:
+  `cargo fmt --all && cargo clippy --all-targets -- -D warnings && RUST_TEST_THREADS=1 cargo test --workspace`
+- Full test = **396 hijau** saat ini.Integration test Butuh env:
+  - `$env:RUST_TEST_THREADS="1"` ( WAJIB — test deploy Anvil memakai nonce
+    deployer yang sama, bentrok jika paralel ).
+  - `$env:NFT_SKIP_NETWORK_TESTS="1"` / `$env:NFT_SKIP_FORK_TESTS="1"` untuk
+    skip; tanpa flag, chain integration memerlukan RPC publik Sepolia
+    (terjangkau dari mesin ini), mint/linkresolver integration memerlukan
+    Anvil:
+    `& ".\.foundry\anvil.exe" --port 8545 --block-time 1` (Foundry 1.3.2
+    di `.foundry/`, bukan dari cargo install).
+- **Penting**: tulis string literal Rust **ASCII-only**. File yang mengandung
+  §/—/emoji pernah mengalami mojibake (UTF-8 double-encoded) di sesi
+  sebelumnya; beberapa file lama masih mengandung karakter non-ASCII hasil
+  encoding aneh — biarkan, jangan ditulis ulang tanpa `cargo check` setelahnya.
+- Aturan #9 (dependency): **tidak ada crate baru** di Fase 7 & 8 — lanjutkan
+  pola ini; perlu crate baru → tambahkan via `[workspace.dependencies]`
+  root Cargo.toml + alasan di file ini.
+- `git status` bersih; belum ada commit untuk Fase 7/8.
 
 ### ✅ Fase 1 — Fondasi: SELESAI
 
@@ -332,23 +361,258 @@
     cargo clippy --all-targets -- -D warnings && cargo test --workspace`
     hijau → **lalu berhenti dan minta persetujuan user sebelum fase berikut.**
 
-## Target berikutnya: Fase 7 (Hari 28-33) — Social Vault & Browser Worker
+### ✅ Fase 7 — Social Vault & Browser Worker: SELESAI, semua Acceptance lulus
+
+- **`crates/vault`** ( 29 unit test ):
+  - `lib.rs` — Social Vault file-based: satu file terenkripsi per akun di
+    `storage/vault/<id>.bin`, format `magic(7)|version(1)|salt(32)|
+    nonce(24)|ciphertext` — **mesin keystore yang sama** ( Argon2id
+    m=64MiB/t=3/p=1 + XChaCha20-Poly1305, §3B poin 1 ). `SessionState`
+    ( cookies + localStorage + user_agent ) hanya ada di ciphertext; test
+    memastikan nilai cookie/domain tidak muncul di file. `Vault::save_account`
+    atomic ( tmp+rename ), `open_account`/`open_account_with` dekripsi ke
+    `Secret<Vec<u8>>`, validasi id anti path-traversal, `remove_account`,
+    `has_account`, `account_ids`. `AccountKind` ( google|x|discord|custom ).
+  - `meta.rs` — `AccountMetaStore`: metadata NON-rahasia di tabel `accounts`
+    ( id, kind, profile_dir, last_verified ) — tidak ada rahasia di SQLite
+    ( §3B ). `add` ( duplikat → `MetaError::Duplicate` ), `get`, `list`,
+    `touch_verified`, `remove`, `pool()`.
+  - `health.rs` — `session_health` ( §3B poin 5 ): cek tiap akun ->
+    `SessionStatus` `Healthy`/`Stale`/`Missing`/`ExpiringSoon`/`Expired`
+    dari cookie inti ( session/auth/token ) + `last_verified`.
+    `needs_relogin()` → notifikasi login ulang **sebelum** hari mint.
+    `HealthConfig` ( max_age_hours 12, expiring_within_hours 24 ).
+- **`crates/browser`** ( 47 unit test ):
+  - `eip1193.rs` — request/respons EIP-1193: `Eip1193Method` (
+    `requires_policy()` personal_sign/eth_signTypedData_v4/
+    eth_sendTransaction/eth_sign; `is_readonly()` eth_chainId/eth_call/... ),
+    `parse_send_transaction_params` → `BrowserTx`, deteksi **approval tak
+    terbatas** ( selector `095ea7b3` argumen max 64'f' / `a22cb465` true ),
+    `OriginAccounts` ( otorisasi per origin ), kode error standar
+    ( 4001/4100/4200/-32001 ).
+  - `siwe.rs` — parser SIWE EIP-4361 penuh: header domain+address, statement
+    opsional, field URI/Version/Chain ID/Nonce/Issued At + opsional
+    ( Expiration Time/Not Before/Request ID/Resources ). **Field asing =
+    `Malformed`** ( "tidak ada permintaan tersembunyi", §3B ). `validate`:
+    domain pesan = domain halaman, host URI = host origin, nonce segar
+    ( = dikeluarkan & belum dipakai ), chain diizinkan, statement bebas
+    permintaan tersembunyi ( "approve all"/"setapprovalforall"/... ),
+    resource harus http(s)/chain://. `validate_times` ( Expired/NotYetValid ),
+    `render` roundtrip.
+  - `provider.rs` — `Eip1193Provider` ( §3B "Wallet connect lewat browser
+    worker" ): `handle_request` → readonly langsung; `eth_requestAccounts`
+    butuh otorisasi ( 4100 bila belum ); **sign request wajib lewat
+    PolicyEngine** ( aturan keras #2 ); `eth_sendTransaction` dengan
+    approval tak terbatas → POLICY_DENIED otomatis ( §3B ); `personal_sign`
+    berbentuk SIWE divalidasi ketat ( `issue_nonce`, nonce tak bisa dipakai
+    2x ); kill switch memblokir semua sign request.
+  - ponytail: integrasi Chromium nyata ( chromiumoxide/CDP ) menyusul saat
+    VPS siap; saat ini lapisan ini diuji tanpa browser ( aturan keras #5:
+    tidak ada solver captcha/anti-detect ).
+- **Wiring Telegram** ( `crates/telegram/src/accounts.rs`, 9 test ):
+  perintah `/accounts` masuk `ENABLED_COMMANDS` + dispatch `process_command`.
+  `/accounts` ( daftar+status ), `/accounts add <id> <kind>` ( login manual
+  via remote browser — agent **tidak pernah meminta password di chat**,
+  aturan keras #4 ), `/accounts check` ( session_health ), `/accounts
+  remove <id>` ( hapus file+metadata ). `BotState.vault` +
+  `BotState.account_store` ( `None` → pesan jelas ). Audit setiap aksi.
+- **Wiring preflight** ( `crates/preflight/src/lib.rs` ): cek "Login" §6.1
+  sekarang memakai `SessionHealthReport` ( bukan placeholder ) —
+  `required_logins` di `PreflightConfig`; vault kosong/sesi expired →
+  **merah → war tidak otomatis**. `preflight()` signature +1 param
+  `Option<&[SessionHealthReport]>` ( `None` = tak butuh login );
+  `mintcommand::run_preflight` & integration test diupdate.
+- Config: tidak ada perubahan skema ( tabel `accounts` sudah ada dari
+  Fase 1; session state di file vault, bukan SQLite — §3B ).
+- Dep Fase 7 via `[workspace.dependencies]` ( aturan #9 ): **tidak ada crate
+  baru** — vault memakai argon2/chacha20poly1305/zeroize/serde/sqlx yang
+  sudah ada; browser memakai alloy/nft-policy/nft-chain yang sudah ada.
+  Crate langsung: `nft-vault` ( telegram/preflight ), `nft-vault`+`nft-core`
+  ( browser ).
+- **Verifikasi terakhir sukses**: `cargo fmt --all && cargo clippy
+  --all-targets -- -D warnings && RUST_TEST_THREADS=1 cargo test
+  --workspace` → **316 test hijau** ( 38 core + 11 keystore + 13 policy +
+  6 signer + 29 chain unit + 5 chain integration + 31 mint unit +
+  6 mint integration + 17 linkresolver unit + 3 linkresolver integration +
+  9 preflight + 29 vault + 47 browser + 66 telegram unit +
+  5 telegram integration ), 0 gagal, 0 warning. Fork test Anvil & RPC
+  publik Sepolia juga hijau.
+
+### ✅ Fase 8 — Marketplace & Trader: SELESAI, semua Acceptance lulus
+
+- **`crates/market`** ( 25 unit test ):
+  - `lib.rs` — trait `Marketplace` seragam ( §F2 ): `get_floor`,
+    `get_listings`, `buy`, `list`, `bid`, `cancel`. Tipe seragam
+    `Listing`/`FloorPrice`/`ListParams`/`BidParams`/`UnsignedOrder`.
+    **`buy`/`list`/`bid`/`cancel` mengembalikan `UnsignedOrder` yang
+    BELUM ditandatangani** — pemanggil wajib lewat Policy Engine dahulu
+    ( aturan keras #2 ). `MarketHttp` bersama ( HTTP/2 keep-alive ),
+    retry 3x exponential backoff, error standar ( 429 rate-limit,
+    4xx/5xx jelas ).
+  - `rate.rs` — `RateLimiter` token bucket per adapter ( §F2 "Rate
+    limiter + retry" ): `capacity` request per `window`, `acquire`
+    mengembalikan `RateLimited`, `remaining` untuk observabilitas.
+  - `opensea.rs` — `OpenSeaAdapter` ( Seaport 1.6, mainnet default
+    `0x00000000006c3852cbEf3e08E8dF639F9306561e` ): baca floor via
+    `/api/v2/collections/{addr}/stats` + listings via
+    `/api/v2/listings/collection/{addr}?order_by=price_asc`; susun
+    order EIP-712 Seaport ( name/version/verifyingContract ) untuk
+    buy/list/bid/cancel. Validasi: chain adapter = chain order, harga
+    > 0, durasi > 0, order_id tak kosong. ponytail: integrasi HTTP
+    penuh menunggu API key ( `OPENSEA_API_KEY` ); sekarang diuji lewat
+    parse respons & endpoint mati.
+- **`crates/trader`** ( 48 unit test ):
+  - `rules.rs` — parser `rules.toml` ( §4 config ): `[[rule]]` dengan
+    `name`/`kind`/`collection`/`action`/`max_price_eth`/`below_floor_pct`/
+    `max_buy_per_day`/`take_profit_pct`/`stop_loss_pct`/
+    `list_duration_hours`/`enabled`. Validasi ketat: buy wajib kriteria
+    harga, sell wajib TP/SL, alamat koleksi valid, pct 0..=100,
+    nama duplikat ditolak, `deny_unknown_fields`.
+  - `engine.rs` — `TradeEngine` deterministik: `evaluate_buy` ( rule buy
+    vs floor + listings + `max_buy_per_day` ), `evaluate_sell` (
+    take-profit → `ListForSale`, stop-loss → `StopLoss` dari portfolio ),
+    `ListingInfo::is_stale` + `cancel_action` ( auto-cancel listing basi ).
+    Output `TradeAction` — **bukan tx**, pemanggil wajib lewat Policy
+    Engine ( aturan keras #2 ).
+  - `pnl.rs` — `Portfolio` + `PnLEntry`: harga beli rata-rata tertimbang,
+    nilai sekarang di-refresh dari floor, PnL absolut/persen per posisi
+    & total, `take_profit_price`/`stop_loss_price`, `hit_take_profit`/
+    `hit_stop_loss`, `summarize()` ( bebas rahasia ).
+- **Wiring Telegram** ( `crates/telegram/src/trade.rs`, 7 test ):
+  `/portfolio` ( ringkasan PnL ), `/rules` ( daftar ), `/rules reload`
+  ( muat ulang `rules.toml` + validasi ). Masuk `ENABLED_COMMANDS` +
+  dispatch `process_command` + audit. `BotState.portfolio` &
+  `BotState.rules` ( `Mutex`, default kosong ).
+- Config: `RULES_FILE` konstanta `rules.toml` di `crates/core/src/config.rs`;
+  contoh `config/rules.toml` ( 2 rule, `enabled = false` — harus diaktifkan
+  manual, konsisten dengan aturan keras #3 dry-run default ).
+- Dep Fase 8 via `[workspace.dependencies]` ( aturan #9 ): **tidak ada crate
+  baru** — market memakai reqwest/alloy/async-trait/chrono yang sudah ada;
+  trader memakai toml/alloy/serde yang sudah ada.
+- **Verifikasi terakhir sukses**: `cargo fmt --all && cargo clippy
+  --all-targets -- -D warnings && RUST_TEST_THREADS=1 cargo test
+  --workspace` → **396 test hijau** ( 38 core + 11 keystore + 13 policy +
+  6 signer + 29 chain unit + 5 chain integration + 31 mint unit +
+  6 mint integration + 17 linkresolver unit + 3 linkresolver integration +
+  9 preflight + 29 vault + 47 browser + 25 market + 48 trader +
+  73 telegram unit + 5 telegram integration ), 0 gagal, 0 warning.
+
+### ✅ Fase 9 — LLM, Skills, Bahasa Natural: SELESAIA, semua Acceptance lulus
+
+- **`crates/llm`** ( 26 unit test ):
+  - `lib.rs` — `ChatMessage` ( system/user ), `LlmConfig::from_models`
+    ( timeout dari `plan_timeout_secs`, minimum 1 detik ).
+  - `router.rs` — `LlmClient` OpenAI-compatible: satu `reqwest::Client`
+    ( HTTP/2 keep-alive + pool, §8.2 poin 5 ), `POST {base}/chat/completions`
+    + `Authorization: Bearer` ( header sensitive, tolak CRLF injeksi ).
+    Base URL & API key dibaca dari **env var** yang dinamai di
+    `models.toml` ( kredensial tidak ditulis di file config, §F7 ).
+    `with_model()` ganti model runtime ( `/model <id>`, §F7 "ganti model
+    tanpa ubah kode" ). Timeout mutlak ( default 3 dtk dari
+    `plan_timeout_secs`, §8.2 poin 3 — LLM tidak boleh di jalur eksekusi
+    mint, aturan keras #6 ).
+  - `sanitize.rs` — `sanitize_untrusted` ( §F7 prompt injection ):
+    bungkus teks asing sebagai `[DATA TIDAK TEPERCAYA ...]`, netralkan
+    baris berbahaya ( "kirim semua eth", "ignore previous",
+    "setapprovalforall", "approve(", "you are now", "tanpa konfirmasi" )
+    dengan prefix `>`, potong di 8 KiB. ponytail: filter teks bukan
+    jaminan mutlak — pertahanan utama tetap Policy Engine + verifikasi
+    on-chain.
+  - `tools.rs` — `ToolSpec` ( deklarasi tool function calling ) +
+    `parse_tool_calls` ( parser longgar: code fence + teks pengantar,
+    tapi ketat field wajib; arguments wajib objek JSON ). Tool call
+    **belum dieksekusi** — eksekusi deterministik di handler skill.
+  - Integration: tidak ada crate baru ( reqwest/serde/tokio sudah ada
+    di workspace, aturan #9 ).
+- **`crates/skills`** ( 26 unit test ):
+  - `manifest.rs` — `SkillManifest` ( `skill.toml`, `deny_unknown_fields` ):
+    name ( alfanumerik/_/- anti path traversal ), script ( nama file
+    saja, anti `..` ), interpreter ( python|node|bash ), timeout 1..=60
+    dtk. `SkillPermission`: `allowed_tools` ( subset `AllowedTool`:
+    get_floor/get_listings/gas_price/mint_plan — **tool financial
+    buy/sign/approve tidak pernah tersedia untuk skill**, §F8 ),
+    `allowed_domains`, `max_calls_per_hour`, `can_propose_intent`.
+    Default **deny-all**: skill tanpa deklarasi tool tidak bisa
+    memanggil apapun ( acceptance Fase 9 ).
+  - `sandbox.rs` — `run_skill` eksekusi **subprocess terpisah** (
+    ponytail: WASM menyusul; subprocess dipilih karena isolasi memory
+    jelas + tidak butuh runtime baru, aturan #9 ). Komunikasi JSON
+    stdin/stdout; env dibersihkan ( hanya PATH+SYSTEMROOT diteruskan,
+    skill tidak mewarisi token agent ); timeout mutlak + kill lewat
+    taskkill. Output divalidasi: tool di luar permission →
+    `ToolOutOfPermission`, pesan berbahaya → `DangerousOutput`.
+    `SkillInput` hanya data pasar ( floor, gas, koleksi ) — **bebas
+    rahasia** ( §F8 "Skill tidak punya akses signer/keystore" ).
+  - Skill contoh di `skills/`: `floor_sniper` ( report floor, 2 tool ),
+    `gas_optimizer` ( sarankan tier gas, deny-all ). Keduya
+    `can_propose_intent = false`.
+- **Bahasa natural -> rule** ( `crates/trader/src/naturallang.rs`, 17 test ):
+  - `RuleDraft` + `parse_draft` ( parser JSON longgar dari respons LLM +
+    validasi ketat: pola berbahaya ditolak, kriteria harga wajib,
+    alamat valid ).
+  - `parse_pattern` — **fallback deterministik tanpa LLM** ( §8.2 poin 3 ):
+    "beli <alamat> di bawah 2 ETH" / "di bawah 10% floor" / "list +20%".
+  - `NL_SYSTEM_PROMPT` — instruksi LLM hanya kembalikan JSON field
+    `RuleDraft`; permintaan berbahaya → `{"name":"DITOLAK"}`.
+  - `add_draft` — tambah draft ke `RulesConfig` ( cek duplikat nama ).
+- **Wiring Telegram**:
+  - `llmcommand.rs` ( 6 test ) — `/model` ( daftar + model aktif ),
+    `/model <id>` ( ganti via `LlmClient::with_model` ), `/skills`
+    ( daftar folder `skills/` ), `/skills <id>` ( jalankan sekali,
+    hasil laporan ).
+  - `nlcommand.rs` ( 7 test ) — `natural_to_rule` ( LLM → draft,
+    fallback `parse_pattern` bila LLM error/timeout ), `DraftSessions`
+    ( draft pending per user, TTL 2 menit ).
+  - `bot.rs` — pesan non-perintah dari user whitelist masuk antrean
+    sebagai perintah `natural` ( hot path hanya ack; LLM di worker,
+    aturan keras #6 ). `/yes` `/no` konfirmasi draft ( §F6: "tampilkan
+    ringkasan + tombol Konfirmasi sebelum disimpan" ). Import phrase
+    tetap punya prioritas ( §3A poin 3 ).
+  - `ENABLED_COMMANDS` sekarang 17: + `/model`, `/skills`, `/yes`,
+    `/no`. `BotState` +4 field: `models`, `llm`, `draft_sessions`,
+    `skills_dir`.
+- Config: tidak ada perubahan skema ( `models.toml` sudah ada dari
+  Fase 1 dengan `default`/`plan_timeout_secs`/`[[model]]` ).
+- Dep Fase 9 via `[workspace.dependencies]` ( aturan #9 ): **tidak ada
+  crate baru** — llm memakai reqwest/serde/thiserror/tokio yang sudah
+  ada; skills memakai toml/tokio(process)/serde; trader/telegram
+  memakai crate sendiri + nft-llm/nft-skills.
+- **Verifikasi terakhir sukses**: `cargo fmt --all && cargo clippy
+  --all-targets -- -D warnings && RUST_TEST_THREADS=1 cargo test
+  --workspace` → **478 test hijau** ( 38 core + 11 keystore + 13 policy +
+  6 signer + 30 chain unit + 5 chain integration + 31 mint unit +
+  6 mint integration + 17 linkresolver unit + 3 linkresolver integration +
+  9 preflight + 29 vault + 47 browser + 25 market + 65 trader +
+  26 llm + 26 skills + 86 telegram unit + 5 telegram integration ),
+  0 gagal, 0 warning.
+- **Acceptance Fase 9** ( §9 ):
+  1. Ganti Claude <-> Ollama tanpa ubah kode: `models.toml` routing +
+     `LlmClient::with_model` + `/model <id>` (
+     `ganti_model_tanpa_ubah_kode`, `model_ganti_tanpa_ubah_kode` ).
+     Semua endpoint OpenAI-compatible ( base URL per entri dari env ).
+  2. Skill minta tool di luar permission ditolak:
+     `skill_node_tool_di_luar_permission_ditolak`,
+     `tool_finansial_ditolak_walupun_di_manifest`,
+     `tool_di_luar_permission_ditolak` ( termasuk tool financial yang
+     sengaja didaftarkan di manifest tetap ditolak karena bukan
+     `AllowedTool` ).
+  3. Prompt injection tidak menghasilkan intent berbahaya:
+     `instruksi_penipuan_dinetralkan` ( sanitize ),
+     `draft_berbahaya_ditolak` ( draft LLM ),
+     `pesan_berbahaya_ditolak` + `skill_output_berbahaya_ditolak`
+     ( output skill ). LLM hanya mengusulkan; Policy Engine menyetujui.
+
+## Target berikutnya: Fase 10 (Hari 45-48) — REST API & Scheduler
 
 Urutan pengerjaan yang disarankan:
 
-1. `crates/vault`: simpan storage state terenkripsi ( file-based, bukan
-   SQLite ), `/accounts add|check|remove`, remote browser via Tailscale
-   untuk login manual ( termasuk 2FA ).
-2. `crates/browser`: Chromium ( `chromiumoxide` ) per profil terisolasi,
-   provider EIP-1193 dengan **semua sign request lewat Policy Engine**
-   ( aturan keras #2 ), parser SIWE ( cek domain/nonce ).
-3. `session_health` + notifikasi sebelum sesi mati ( `nft_notify` );
-   berhenti dan minta user bila ada captcha/2FA ( aturan keras #5 ).
-4. Sambungkan ke preflight §6.1 cek "Login" ( sekarang placeholder ).
-5. Acceptance Fase 7 ( blueprint §9 ): login Google/X tidak menyimpan
-   password mentah; sesi tetap valid setelah restart; permintaan sign
-   dari halaman uji berisi `setApprovalForAll` ke alamat asing ditolak;
-   SIWE dengan domain tidak cocok ditolak; tidak ada kode solver captcha.
+1. `crates/scheduler`: cron, one-shot ( mint pada tanggal/jam tertentu ),
+   trigger event ( block baru, floor turun, listing baru ); job tersimpan
+   di SQLite dan tetap jalan setelah restart ( §F9 ).
+2. `crates/api`: axum REST + auth Bearer + OpenAPI + SSE; hanya bind
+   `127.0.0.1` / lewat VPN ( Tailscale ), §F10.
+3. Acceptance Fase 10 ( blueprint §9 ): job terjadwal tetap jalan setelah
+   restart; API hanya dapat diakses dari localhost/VPN.
 
 ## Checklist Acceptance tiap fase (ringkas, dari §9)
 
@@ -369,9 +633,28 @@ Urutan pengerjaan yang disarankan:
   terverifikasi; idempotency key menolak dobel eksekusi; `MintTxStatus::DryRun` tidak
   mengirim. )
 - F6 ✅ — 10 link uji diproses benar; link scam tidak pernah jadi tx; preflight merah blokir war.
-- F7 — tanpa password mentah; sign setApprovalForAll asing ditolak; SIWE domain salah ditolak.
-- F8 — rule buy/list end-to-end testnet; PnL benar 3 skenario.
-- F9 — ganti model tanpa ubah kode; prompt injection tidak menghasilkan intent berbahaya.
+- F7 ✅ — tanpa password mentah; sign setApprovalForAll asing ditolak; SIWE domain salah ditolak.
+  ( Vault: hanya `SessionState` terenkripsi yang disimpan ( test
+  `file_vault_tidak_mengandung_plaintext_cookie` ), password tidak pernah
+  diminta di chat; `/accounts add` membuat profil browser isolasi untuk
+  login manual. Browser: `send_transaction_approval_tak_terbatas_ditolak`
+  + `setapprovalforall_ke_asing_ditolak`; SIWE `validate_domain_berbeda_ditolak`
+  + `validate_uri_berbeda_ditolak` + `siwe_nonce_tidak_dipakai_dua_kali`;
+  tidak ada kode solver captcha di repo ( grep `captcha` → hanya komentar
+  aturan keras #5 ). Sesi tetap ada setelah restart: file vault persisten
+  + metadata `accounts` di SQLite WAL. )
+- F8 ✅ — rule buy/list end-to-end testnet; PnL benar 3 skenario.
+  ( rule buy "beli di bawah X%" dievaluasi di `evaluate_buy`; rule sell
+  "list +Y%" di `evaluate_sell`; PnL benar di 3 skenario test: untung
+  +50%, rugi -25%, impas 0%. End-to-end fork Anvil menyusul Fase 12
+  saat ExecPlan menyatukan market+policy+signer. )
+- F9 ✅ — ganti model tanpa ubah kode; prompt injection tidak menghasilkan intent berbahaya.
+  ( `models.toml` routing + `LlmClient::with_model` + `/model <id>`;
+  skill tool di luar permission ditolak ( `AllowedTool` tertutup, tool
+  financial tidak tersedia ); prompt injection ditolak di tiga lapis:
+  `sanitize_untrusted` ( input ), `parse_draft` ( draft LLM ),
+  `validate_output` ( output skill ). LLM hanya mengusulkan; Policy
+  Engine menyetujui. )
 - F10 — job tetap jalan setelah restart; API localhost-only.
 - F11 — event high/critical sampai WhatsApp tanpa rahasia; fallback Telegram teruji.
 - F12 — target latensi §8.1 tercapai; 100 simulasi war tanpa kegagalan sisi-agent.

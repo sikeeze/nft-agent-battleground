@@ -91,6 +91,15 @@ totp-rs = { version = "5", features = ["gen_secret", "zeroize"] }
 # untuk normalisasi domain/jalur sebelum handler platform.
 url = "2"
 
+# --- Fase 7 (Hari 28-33): social vault & browser worker ---
+# argon2 & chacha20poly1305 & zeroize & chrono & sqlx & tracing sudah ada
+# di atas (dipakai keystore/policy/chain). Tidak ada crate baru di fase ini:
+# vault memakai mesin enkripsi yang sama dengan keystore (§3B poin 1), dan
+# browser worker memakai reqwest/alloy yang sudah terpasang.
+# ponytail: chromiumoxide (Chromium via CDP) menyusul saat VPS siap; saat ini
+# browser crate berisi provider EIP-1193 + parser SIWE yang diuji tanpa
+# browser nyata (aturan keras #5: tidak ada solver captcha/anti-detect).
+
 
 [profile.release]
 # §8.2 poin 10: build rilis dioptimalkan untuk latensi hot path

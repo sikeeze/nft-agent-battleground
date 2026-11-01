@@ -111,6 +111,9 @@ pub struct PreflightConfig {
     pub gas_cap_margin_pct: f64,
     /// Offset jam maksimum ( §6.1: "< 50 ms" ). Host wajib chrony.
     pub max_clock_drift_ms: u64,
+    /// Akun sosial yang wajib sesi aktif bila mint butuh login ( §6.1 cek
+    /// "Login", §3B poin 5 ). Kosong = mint tidak butuh login.
+    pub required_logins: Vec<String>,
 }
 
 impl Default for PreflightConfig {
@@ -121,6 +124,7 @@ impl Default for PreflightConfig {
             gas_reserve_pct: 0.30,
             gas_cap_margin_pct: 0.10,
             max_clock_drift_ms: 50,
+            required_logins: Vec::new(),
         }
     }
 }
@@ -130,12 +134,15 @@ impl Default for PreflightConfig {
 /// - `pool` : RPC chain target.
 /// - `nonces` : nonce manager yang sudah di-sync pre-warm.
 /// - `policy` : config policy ( limits, gas cap ).
+/// - `logins` : hasil `session_health` Social Vault ( §6.1 cek Login ).
+///   `None` = mint tidak butuh login; `Some(vec![])` = vault tak ada akun.
 pub async fn preflight(
     plan: &MintPlan,
     pool: &RpcPool,
     nonces: &NonceManager,
     policy: &PolicyConfig,
     config: &PreflightConfig,
+    logins: Option<&[nft_vault::SessionHealthReport]>,
 ) -> Result<PreflightReport, PreflightError> {
     let mut checks = Vec::new();
 
@@ -442,11 +449,46 @@ pub async fn preflight(
         ));
     }
 
-    // --- 9. Login ( §6.1: sesi Google/X aktif jika dibutuhkan ).
-    checks.push(Check::pass(
-        "Login",
-        "tidak dibutuhkan untuk mint ini ( Fase 7 )",
-    ));
+    // --- 9. Login ( §6.1: sesi Google/X aktif jika dibutuhkan, §3B poin 5 ).
+    match logins {
+        None => checks.push(Check::pass("Login", "tidak dibutuhkan untuk mint ini")),
+        Some(reports) => {
+            if config.required_logins.is_empty() {
+                checks.push(Check::pass("Login", "tidak dibutuhkan untuk mint ini"));
+            } else if reports.is_empty() {
+                checks.push(Check::fail(
+                    "Login",
+                    "vault kosong - tidak ada akun sosial terdaftar",
+                ));
+            } else {
+                let mut ok = true;
+                let mut detail = String::new();
+                for need in &config.required_logins {
+                    let Some(r) = reports.iter().find(|r| &r.account_id == need) else {
+                        ok = false;
+                        detail.push_str(&format!("akun {need} tidak ada di vault; "));
+                        continue;
+                    };
+                    if r.needs_relogin() {
+                        ok = false;
+                        detail.push_str(&format!("{}: {}; ", r.account_id, r.message));
+                    }
+                }
+                if ok {
+                    checks.push(Check::pass(
+                        "Login",
+                        format!(
+                            "{} akun sesi aktif ( dibutuhkan: {} )",
+                            reports.len(),
+                            config.required_logins.join(", ")
+                        ),
+                    ));
+                } else {
+                    checks.push(Check::fail("Login", detail));
+                }
+            }
+        }
+    }
 
     // --- 10. Policy ( §6.1: batas tidak terlanggar rencana ini ).
     let total_value = plan.sale.price * U256::from(plan.wallets.iter().map(|w| w.qty).sum::<u64>());
@@ -577,13 +619,107 @@ mod tests {
 
     #[tokio::test]
     async fn preflight_endpoint_mati_lapor_merah() {
-        let pool = RpcPool::new(nft_chain::RpcPoolConfig {
+        let pool = dead_pool();
+        let plan = plan_min();
+        let policy = policy_min();
+        let nonces = NonceManager::new();
+        // RPC mati: cek Saldo gagal → report merah, bukan panic.
+        let report = preflight(
+            &plan,
+            &pool,
+            &nonces,
+            &policy,
+            &PreflightConfig::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(!report.passed, "preflight harus merah saat RPC mati");
+        assert!(report.failures().iter().any(|c| c.name == "Saldo"));
+    }
+
+    #[tokio::test]
+    async fn login_check_gagal_bila_vault_kosong_saat_dibutuhkan() {
+        let pool = dead_pool();
+        let plan = plan_min();
+        let policy = policy_min();
+        let nonces = NonceManager::new();
+        let config = PreflightConfig {
+            required_logins: vec!["x-main-burner".into()],
+            ..PreflightConfig::default()
+        };
+        let reports: Vec<nft_vault::SessionHealthReport> = Vec::new();
+        let report = preflight(&plan, &pool, &nonces, &policy, &config, Some(&reports))
+            .await
+            .unwrap();
+        let login = report.failures().into_iter().find(|c| c.name == "Login");
+        assert!(login.is_some(), "Login harus merah saat vault kosong");
+    }
+
+    #[tokio::test]
+    async fn login_check_gagal_bila_sesi_butuh_relogin() {
+        let pool = dead_pool();
+        let plan = plan_min();
+        let policy = policy_min();
+        let nonces = NonceManager::new();
+        let config = PreflightConfig {
+            required_logins: vec!["x-1".into()],
+            ..PreflightConfig::default()
+        };
+        let reports = vec![session_report("x-1", nft_vault::SessionStatus::Expired)];
+        let report = preflight(&plan, &pool, &nonces, &policy, &config, Some(&reports))
+            .await
+            .unwrap();
+        let login = report.failures().into_iter().find(|c| c.name == "Login");
+        assert!(login.is_some(), "Login harus merah saat sesi expired");
+    }
+
+    #[tokio::test]
+    async fn login_check_lulus_bila_sesi_sehat() {
+        let pool = dead_pool();
+        let plan = plan_min();
+        let policy = policy_min();
+        let nonces = NonceManager::new();
+        let config = PreflightConfig {
+            required_logins: vec!["x-1".into()],
+            ..PreflightConfig::default()
+        };
+        let reports = vec![session_report("x-1", nft_vault::SessionStatus::Healthy)];
+        let report = preflight(&plan, &pool, &nonces, &policy, &config, Some(&reports))
+            .await
+            .unwrap();
+        let login = report.checks.iter().find(|c| c.name == "Login");
+        assert!(login.is_some_and(|c| c.passed), "Login harus hijau");
+    }
+
+    fn session_report(
+        id: &str,
+        status: nft_vault::SessionStatus,
+    ) -> nft_vault::SessionHealthReport {
+        let message = if status.needs_relogin() {
+            "sesi bermasalah - login ulang diperlukan".to_string()
+        } else {
+            "sesi aktif".to_string()
+        };
+        nft_vault::SessionHealthReport {
+            account_id: id.into(),
+            kind: nft_vault::AccountKind::X,
+            status,
+            message,
+        }
+    }
+
+    fn dead_pool() -> RpcPool {
+        RpcPool::new(nft_chain::RpcPoolConfig {
             http_urls: vec!["http://127.0.0.1:9".into()],
             request_timeout_ms: 300,
             ..Default::default()
         })
-        .unwrap();
-        let plan = MintPlan {
+        .unwrap()
+    }
+
+    fn plan_min() -> MintPlan {
+        MintPlan {
             chain_id: 8453,
             contract: Address::from_slice(&[0x22; 20]),
             sale: nft_mint::sale::SaleState {
@@ -604,9 +740,11 @@ mod tests {
                 qty: 1,
             }],
             gas_mode: GasMode::Aggressive,
-        };
-        let nonces = NonceManager::new();
-        let policy = nft_core::config::parse_policy(
+        }
+    }
+
+    fn policy_min() -> PolicyConfig {
+        nft_core::config::parse_policy(
             r#"
         [limits]
         max_spend_per_tx_eth = 1.0
@@ -632,13 +770,7 @@ mod tests {
         max_wallets = 5
         "#,
         )
-        .unwrap();
-        // RPC mati: cek Saldo gagal → report merah, bukan panic.
-        let report = preflight(&plan, &pool, &nonces, &policy, &PreflightConfig::default())
-            .await
-            .unwrap();
-        assert!(!report.passed, "preflight harus merah saat RPC mati");
-        assert!(report.failures().iter().any(|c| c.name == "Saldo"));
+        .unwrap()
     }
 
     #[tokio::test]

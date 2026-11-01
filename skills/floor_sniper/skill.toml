@@ -1,0 +1,17 @@
+# floor_sniper S skill contoh (blueprint SF8)
+# Pantau floor koleksi & laporkan saat floor turun di bawah ambang.
+# Skill ini HANYA membaca & melapor; tidak bisa menghasilkan intent
+# (can_propose_intent = false) dan tidak punya akses signer/keystore.
+
+name = "floor_sniper"
+description = "Pantau floor koleksi & laporkan saat floor turun di bawah ambang"
+version = "1"
+timeout_secs = 5
+script = "run.js"
+interpreter = "node"
+
+[permissions]
+allowed_tools = ["get_floor", "get_listings"]
+allowed_domains = []
+max_calls_per_hour = 30
+can_propose_intent = false

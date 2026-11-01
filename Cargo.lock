@@ -3867,6 +3867,20 @@ version = "0.1.0"
 [[package]]
 name = "nft-browser"
 version = "0.1.0"
+dependencies = [
+ "alloy",
+ "async-trait",
+ "chrono",
+ "nft-chain",
+ "nft-core",
+ "nft-policy",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "nft-chain"
@@ -3949,10 +3963,33 @@ dependencies = [
 [[package]]
 name = "nft-llm"
 version = "0.1.0"
+dependencies = [
+ "nft-core",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "nft-market"
 version = "0.1.0"
+dependencies = [
+ "alloy",
+ "async-trait",
+ "chrono",
+ "nft-core",
+ "nft-signer",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "nft-mint"
@@ -4010,6 +4047,7 @@ dependencies = [
  "nft-mint",
  "nft-policy",
  "nft-signer",
+ "nft-vault",
  "serde",
  "serde_json",
  "tempfile",
@@ -4038,6 +4076,17 @@ dependencies = [
 [[package]]
 name = "nft-skills"
 version = "0.1.0"
+dependencies = [
+ "nft-core",
+ "nft-llm",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "toml",
+ "tracing",
+]
 
 [[package]]
 name = "nft-telegram"
@@ -4051,10 +4100,14 @@ dependencies = [
  "nft-core",
  "nft-keystore",
  "nft-linkresolver",
+ "nft-llm",
  "nft-mint",
  "nft-policy",
  "nft-preflight",
  "nft-signer",
+ "nft-skills",
+ "nft-trader",
+ "nft-vault",
  "rand 0.8.8",
  "serde",
  "serde_json",
@@ -4072,10 +4125,36 @@ dependencies = [
 [[package]]
 name = "nft-trader"
 version = "0.1.0"
+dependencies = [
+ "alloy",
+ "nft-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "toml",
+ "tracing",
+]
 
 [[package]]
 name = "nft-vault"
 version = "0.1.0"
+dependencies = [
+ "argon2",
+ "chacha20poly1305",
+ "chrono",
+ "nft-core",
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "zeroize",
+]
 
 [[package]]
 name = "nft-whatsapp"

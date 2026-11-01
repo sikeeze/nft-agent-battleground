@@ -12,6 +12,10 @@ nft-chain = { path = "../chain", package = "nft-chain" }
 nft-mint = { path = "../mint", package = "nft-mint" }
 nft-linkresolver = { path = "../linkresolver", package = "nft-linkresolver" }
 nft-preflight = { path = "../preflight", package = "nft-preflight" }
+nft-vault = { path = "../vault", package = "nft-vault" }
+nft-trader = { path = "../trader", package = "nft-trader" }
+nft-llm = { path = "../llm", package = "nft-llm" }
+nft-skills = { path = "../skills", package = "nft-skills" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

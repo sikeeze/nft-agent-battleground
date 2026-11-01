@@ -1,0 +1,39 @@
+# rules.toml — rule trading otomatis (blueprint §F2, §9 Fase 8)
+#
+# Format setiap [[rule]]:
+#   name              (wajib) nama unik rule
+#   kind              (wajib) "buy" | "sell" | "custom"
+#   collection        (wajib) alamat kontrak koleksi
+#   action            (wajib) "buy" | "sell" | "list" | "bid" | "cancel" | "custom:nama"
+#   max_price_eth     (buy) batas harga beli
+#   below_floor_pct   (buy) beli bila X% di bawah floor
+#   max_buy_per_day   (buy) batas pembelian per hari
+#   take_profit_pct   (sell) take profit (% di atas harga beli)
+#   stop_loss_pct     (sell) stop loss (% di bawah harga beli)
+#   list_duration_hours (sell) durasi listing
+#   enabled           true/false
+#
+# ATURAN: setiap aksi yang dipicu rule tetap lewat Policy Engine + tidak
+# ada tx tanpa konfirmasi yang ditentukan policy (aturan keras #2, §F5).
+
+# Contoh: snipe floor koleksi contoh ( alamat dummy — ganti dengan koleksi asli ).
+[[rule]]
+name = "floor-snipe-contoh"
+kind = "buy"
+collection = "0x1e0e7eF5D8C2a093F9c2d5b8e2e2e2e2e2e2e2e2"
+action = "buy"
+max_price_eth = 8.0
+below_floor_pct = 10
+max_buy_per_day = 2
+enabled = false
+
+# Contoh: take profit + stop loss.
+[[rule]]
+name = "take-profit-contoh"
+kind = "sell"
+collection = "0x1e0e7eF5D8C2a093F9c2d5b8e2e2e2e2e2e2e2e2"
+action = "list"
+take_profit_pct = 25
+stop_loss_pct = 15
+list_duration_hours = 72
+enabled = false

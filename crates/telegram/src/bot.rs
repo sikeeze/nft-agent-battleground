@@ -55,6 +55,25 @@ pub struct BotState {
     /// RPC pool chain target ( dari `chain.toml` ). `None` bila belum
     /// dikonfigurasi — perintah /mint & /war akan menolak dengan jelas.
     pub rpc: Option<nft_chain::RpcPool>,
+    /// Social Vault ( §3B, Fase 7 ): penyimpanan sesi Google/X terenkripsi.
+    /// `None` bila vault belum dikonfigurasi - perintah /accounts menolak jelas.
+    pub vault: Option<nft_vault::Vault>,
+    /// Metadata akun social vault di SQLite ( tabel `accounts` ).
+    pub account_store: Option<nft_vault::AccountMetaStore>,
+    /// Root direktori profil browser isolasi ( §3B poin 3: satu profil per akun ).
+    pub profile_root: String,
+    /// Portfolio trader ( PnL, Fase 8 ).
+    pub portfolio: tokio::sync::Mutex<nft_trader::Portfolio>,
+    /// Config rules trading ( rules.toml, Fase 8 ).
+    pub rules: tokio::sync::Mutex<nft_trader::RulesConfig>,
+    /// Registry model LLM ( models.toml, Fase 9 §F7 ).
+    pub models: Option<nft_core::config::ModelsConfig>,
+    /// Klien LLM aktif ( Fase 9 §F7 ). `None` bila belum dikonfigurasi.
+    pub llm: Option<nft_llm::LlmClient>,
+    /// Sesi draft pending dari bahasa natural ( Fase 9 §F6 ).
+    pub draft_sessions: crate::nlcommand::DraftSessions,
+    /// Folder skill ( Fase 9 §F8 ).
+    pub skills_dir: String,
 }
 
 /// Rakitan perintah masuk a+' `QueuedCommand` ( atau None bila invalid ).
@@ -84,18 +103,44 @@ fn make_command(msg: &Message, enabled_commands: &[&str]) -> Option<QueuedComman
     })
 }
 
+/// Rakitan pesan bahasa natural menjadi `QueuedCommand` ( Fase 9 §F6 ).
+/// Pesan non-perintah dari user whitelist masuk antrean sebagai perintah
+/// `natural` ( cold path worker, bukan hot path — aturan keras #6 ).
+pub fn make_natural_command(msg: &Message) -> Option<QueuedCommand> {
+    let text = msg.text().unwrap_or_default().trim();
+    if text.is_empty() || text.starts_with('/') {
+        return None;
+    }
+    let user_id = msg.from.as_ref().map(|u| u.id.0 as i64)?;
+    let chat_id = msg.chat.id.0;
+    Some(QueuedCommand {
+        command: "natural".into(),
+        user_id,
+        chat_id,
+        args: Some(text.to_string()),
+        received_at: Instant::now(),
+    })
+}
+
 /// Daftar perintah yang dikenal ( parse tanpa LLM, §8.2 poin 3 ).
-pub const ENABLED_COMMANDS: [&str; 10] = [
+pub const ENABLED_COMMANDS: [&str; 17] = [
     "/status",
     "/stop",
     "/import",
     "/newwallet",
     "/wallets",
+    "/accounts",
     "/approve",
     "/reject",
     "/mint",
     "/preflight",
     "/war",
+    "/portfolio",
+    "/rules",
+    "/model",
+    "/skills",
+    "/yes",
+    "/no",
 ];
 
 /// Proses satu pesan masuk ( hot path: validasi + ack + enqueue ).
@@ -110,9 +155,43 @@ pub async fn handle_message(state: &BotState, msg: &Message) -> Option<(String, 
 
     // 2. Parse perintah tanpa LLM.
     let Some(cmd) = make_command(msg, &ENABLED_COMMANDS) else {
-        // Bukan perintah dikenal a+' cek apakah ini sesi import yang menunggu
-        // phrase ( lihat `handle_import_phrase` dipanggil worker ).
-        return None;
+        // Bukan perintah dikenal — bisa jadi:
+        // (a) sesi import menunggu phrase ( lihat `handle_import_phrase` ),
+        // (b) bahasa natural ( Fase 9 §F6 ) — enqueue sebagai "natural".
+        // (c) biasa — abaikan.
+        // Import phrase punya prioritas ( §3A poin 3: pesan dihapus dulu ).
+        if state.import_sessions.get_active(user_id).await.is_some() {
+            return None;
+        }
+        let nl = make_natural_command(msg)?;
+        // Hanya user whitelist yang bisa ( access.check di bawah ).
+        match state.access.check(user_id, true).await {
+            AccessOutcome::Allow => {}
+            _ => return None,
+        }
+        let ack = "Diterima: bahasa natural - diproses".to_string();
+        let chat_id = nl.chat_id;
+        match state.queue.enqueue(nl).await {
+            Ok(ack_ms) => {
+                debug!(user_id, ack_ms, "bahasa natural masuk antrean");
+                let _ = audit(
+                    &state.db,
+                    &user_id.to_string(),
+                    "natural",
+                    None,
+                    Some(&serde_json::json!({"ack_ms": ack_ms})),
+                )
+                .await;
+            }
+            Err(e) => {
+                warn!(?e, "antrean penuh/ditutup");
+                return Some((
+                    "[!] Sistem sibuk - perintah tidak masuk antrean. Coba lagi.".into(),
+                    chat_id,
+                ));
+            }
+        }
+        return Some((ack, chat_id));
     };
 
     // 3. Kontrol akses ( whitelist + rate limit + lockout ).
@@ -439,11 +518,358 @@ pub async fn process_command(state: &BotState, cmd: QueuedCommand) -> CommandRes
                 silent,
             }
         }
+        "/accounts" => {
+            // §3B Social Vault: /accounts, /accounts add|check|remove.
+            // Password Google/X TIDAK pernah diminta di chat ( aturan keras #4 ).
+            let Some(store) = state.account_store.as_ref() else {
+                return CommandResult {
+                    command: cmd.command,
+                    chat_id,
+                    text: "[X] Social Vault belum dikonfigurasi.".into(),
+                    silent,
+                };
+            };
+            let args = cmd.args.as_deref().unwrap_or("").trim();
+            let mut parts = args.split_whitespace();
+            let sub = parts.next().unwrap_or("");
+            let id_arg = parts.next().unwrap_or("");
+            let outcome = match sub {
+                "" => crate::accounts::list_accounts(store).await,
+                "add" => {
+                    let Some(vault) = state.vault.as_ref() else {
+                        return CommandResult {
+                            command: cmd.command,
+                            chat_id,
+                            text: "[X] Social Vault belum dikonfigurasi.".into(),
+                            silent,
+                        };
+                    };
+                    if id_arg.is_empty() {
+                        return CommandResult {
+                            command: cmd.command,
+                            chat_id,
+                            text: "Pakai: /accounts add <id> <google|x|discord|custom>".into(),
+                            silent,
+                        };
+                    }
+                    let kind = parts.next().unwrap_or("custom");
+                    crate::accounts::add_account(
+                        store,
+                        vault,
+                        id_arg,
+                        kind,
+                        &state.profile_root,
+                        &state.passphrase,
+                    )
+                    .await
+                }
+                "check" => {
+                    let Some(vault) = state.vault.as_ref() else {
+                        return CommandResult {
+                            command: cmd.command,
+                            chat_id,
+                            text: "[X] Social Vault belum dikonfigurasi.".into(),
+                            silent,
+                        };
+                    };
+                    crate::accounts::check_accounts(
+                        store,
+                        vault,
+                        &state.passphrase,
+                        &nft_vault::HealthConfig::default(),
+                    )
+                    .await
+                }
+                "remove" => {
+                    if id_arg.is_empty() {
+                        return CommandResult {
+                            command: cmd.command,
+                            chat_id,
+                            text: "Pakai: /accounts remove <id>".into(),
+                            silent,
+                        };
+                    }
+                    match state.vault.as_ref() {
+                        Some(v) => crate::accounts::remove_account(store, v, id_arg).await,
+                        None => match store.remove(id_arg).await {
+                            Ok(_) => crate::accounts::AccountsOutcome {
+                                text:
+                                    "[OK] Akun dihapus dari metadata ( vault tak dikonfigurasi )."
+                                        .into(),
+                            },
+                            Err(e) => crate::accounts::AccountsOutcome {
+                                text: format!("[X] {e}"),
+                            },
+                        },
+                    }
+                }
+                _ => crate::accounts::AccountsOutcome {
+                    text: format!(
+                        "Subperintah tidak dikenal: {sub} ( pakai: add | check | remove )"
+                    ),
+                },
+            };
+            let detail = if id_arg.is_empty() {
+                None
+            } else {
+                Some(serde_json::json!({ "account": id_arg }))
+            };
+            let _ = audit(
+                &state.db,
+                &user_id.to_string(),
+                "/accounts",
+                Some(sub),
+                detail.as_ref(),
+            )
+            .await;
+            CommandResult {
+                command: cmd.command,
+                chat_id,
+                text: outcome.text,
+                silent,
+            }
+        }
+        "/portfolio" => {
+            // F2: portfolio tracker + PnL ( data akuntansi, bebas rahasia ).
+            let portfolio = state.portfolio.lock().await;
+            let out = crate::trade::portfolio_summary(&portfolio);
+            let _ = audit(&state.db, &user_id.to_string(), "/portfolio", None, None).await;
+            CommandResult {
+                command: cmd.command,
+                chat_id,
+                text: out.text,
+                silent,
+            }
+        }
+        "/rules" => {
+            // F2: daftar rule dari rules.toml. `/rules reload` muat ulang.
+            let args = cmd.args.as_deref().unwrap_or("").trim();
+            if args == "reload" {
+                // Muat ulang rules.toml dari config dir ( S3: rules.toml ).
+                let path = std::path::Path::new("config").join(nft_core::config::RULES_FILE);
+                match crate::trade::load_rules(&path) {
+                    Ok(cfg) => {
+                        let n = cfg.rule.len();
+                        *state.rules.lock().await = cfg;
+                        let _ = audit(
+                            &state.db,
+                            &user_id.to_string(),
+                            "/rules",
+                            Some("reload"),
+                            None,
+                        )
+                        .await;
+                        CommandResult {
+                            command: cmd.command,
+                            chat_id,
+                            text: format!("[OK] rules.toml dimuat ulang ({n} rule)."),
+                            silent,
+                        }
+                    }
+                    Err(e) => CommandResult {
+                        command: cmd.command,
+                        chat_id,
+                        text: format!("[X] rules.toml tidak valid: {e}"),
+                        silent,
+                    },
+                }
+            } else {
+                let rules = state.rules.lock().await;
+                let out = crate::trade::list_rules(&rules);
+                let _ = audit(&state.db, &user_id.to_string(), "/rules", None, None).await;
+                CommandResult {
+                    command: cmd.command,
+                    chat_id,
+                    text: out.text,
+                    silent,
+                }
+            }
+        }
+        "/model" => {
+            // §F7: ganti model tanpa ubah kode.
+            let Some(models) = state.models.as_ref() else {
+                return CommandResult {
+                    command: cmd.command,
+                    chat_id,
+                    text: "[X] models.toml belum dimuat.".into(),
+                    silent,
+                };
+            };
+            let Some(llm) = state.llm.as_ref() else {
+                return CommandResult {
+                    command: cmd.command,
+                    chat_id,
+                    text: "[X] Klien LLM belum dikonfigurasi ( models.toml ).".into(),
+                    silent,
+                };
+            };
+            let out = crate::llmcommand::model_command(cmd.args.as_deref(), models, llm).await;
+            let _ = audit(
+                &state.db,
+                &user_id.to_string(),
+                "/model",
+                cmd.args.as_deref(),
+                None,
+            )
+            .await;
+            CommandResult {
+                command: cmd.command,
+                chat_id,
+                text: out.text,
+                silent,
+            }
+        }
+        "/skills" => {
+            // §F8: daftar & jalankan skill ( hanya laporan, tidak ada akses
+            // signer/keystore ).
+            let out = crate::llmcommand::skills_command(
+                cmd.args.as_deref(),
+                std::path::Path::new(&state.skills_dir),
+            )
+            .await;
+            let _ = audit(
+                &state.db,
+                &user_id.to_string(),
+                "/skills",
+                cmd.args.as_deref(),
+                None,
+            )
+            .await;
+            CommandResult {
+                command: cmd.command,
+                chat_id,
+                text: out.text,
+                silent,
+            }
+        }
+        "/yes" => confirm_draft(state, user_id, chat_id, true).await,
+        "/no" => confirm_draft(state, user_id, chat_id, false).await,
+        "natural" => {
+            // Fase 9 §F6: bahasa natural -> draft rule ( cold path ).
+            let Some(text) = cmd.args.as_deref() else {
+                return CommandResult {
+                    command: cmd.command,
+                    chat_id,
+                    text: "[!] Teks kosong.".into(),
+                    silent,
+                };
+            };
+            process_natural_language(state, user_id, chat_id, text).await
+        }
         _ => CommandResult {
             command: cmd.command,
             chat_id,
-            text: "as i, Perintah tidak dikenali.".into(),
+            text: "[!] Perintah tidak dikenali.".into(),
             silent,
+        },
+    }
+}
+
+/// Proses pesan bahasa natural ( worker cold path, Fase 9 §F6 ).
+///
+/// Teks non-perintah dari user whitelist dianggap permintaan rule trading.
+/// LLM mengusulkan draft; bot menampilkan ringkasan + tombol konfirmasi.
+/// **Draft belum disimpan** sampai user konfirmasi ( lihat
+/// `confirm_draft` ). LLM tidak berada di jalur eksekusi mint ( aturan
+/// keras #6, §8.2 poin 3 ).
+pub async fn process_natural_language(
+    state: &BotState,
+    user_id: i64,
+    chat_id: i64,
+    text: &str,
+) -> CommandResult {
+    let Some(llm) = state.llm.as_ref() else {
+        return CommandResult {
+            command: "natural".into(),
+            chat_id,
+            text: "[X] LLM belum dikonfigurasi ( models.toml ) - bahasa natural \
+                   tidak bisa diproses. Gunakan /rules untuk mengatur rule manual."
+                .into(),
+            silent: false,
+        };
+    };
+    match crate::nlcommand::natural_to_rule(llm, text, None).await {
+        Ok(draft) => {
+            let summary = draft.summarize();
+            state.draft_sessions.put(user_id, draft).await;
+            let _ = audit(
+                &state.db,
+                &user_id.to_string(),
+                "natural",
+                Some("draft"),
+                None,
+            )
+            .await;
+            CommandResult {
+                command: "natural".into(),
+                chat_id,
+                text: format!("{summary}\n\nBalas /yes untuk menyimpan, /no untuk membatalkan."),
+                silent: false,
+            }
+        }
+        Err(e) => CommandResult {
+            command: "natural".into(),
+            chat_id,
+            text: format!(
+                "[X] Tidak bisa mengubah teks menjadi rule: {e}\n\
+                 Contoh: 'beli 0x... di bawah 2 ETH'"
+            ),
+            silent: false,
+        },
+    }
+}
+
+/// Konfirmasi draft pending dari bahasa natural ( /yes | /no ).
+pub async fn confirm_draft(
+    state: &BotState,
+    user_id: i64,
+    chat_id: i64,
+    accept: bool,
+) -> CommandResult {
+    if !accept {
+        state.draft_sessions.take(user_id).await; // buang
+        return CommandResult {
+            command: "natural".into(),
+            chat_id,
+            text: "[OK] Draft rule dibatalkan.".into(),
+            silent: false,
+        };
+    }
+    let Some(draft) = state.draft_sessions.take(user_id).await else {
+        return CommandResult {
+            command: "natural".into(),
+            chat_id,
+            text: "[!] Tidak ada draft pending. Kirim perintah bahasa natural \
+                   ( mis. 'beli 0x... di bawah 2 ETH' )."
+                .into(),
+            silent: false,
+        };
+    };
+    let mut rules = state.rules.lock().await;
+    match nft_trader::naturallang::add_draft(&mut rules, draft) {
+        Ok(()) => {
+            let _ = audit(
+                &state.db,
+                &user_id.to_string(),
+                "natural",
+                Some("confirmed"),
+                None,
+            )
+            .await;
+            CommandResult {
+                command: "natural".into(),
+                chat_id,
+                text: "[OK] Rule disimpan ke rules.toml ( aktif ). Gunakan /rules \
+                       untuk melihat."
+                    .into(),
+                silent: false,
+            }
+        }
+        Err(e) => CommandResult {
+            command: "natural".into(),
+            chat_id,
+            text: format!("[X] Draft tidak valid: {e}"),
+            silent: false,
         },
     }
 }
@@ -607,6 +1033,35 @@ pub async fn spawn(state: Arc<BotState>, bot: Bot) {
                         let res = process_import_phrase(&state, user_id, chat_id.0, &text).await;
                         let _ = state.queue.reply(res).await;
                     });
+                } else if let Some(nl) = make_natural_command(&msg) {
+                    // Bahasa natural ( Fase 9 §F6 ): enqueue sebagai perintah
+                    // "natural". Hot path hanya ack; LLM berjalan di worker (
+                    // aturan keras #6, §8.2 poin 3 ).
+                    let user_id = nl.user_id;
+                    let chat_id = nl.chat_id;
+                    if state.access.is_allowed(user_id) {
+                        let _ = bot
+                            .send_message(ChatId(chat_id), "Diterima: bahasa natural - diproses")
+                            .await;
+                        match state.queue.enqueue(nl).await {
+                            Ok(ack_ms) => {
+                                let _ = audit(
+                                    &state.db,
+                                    &user_id.to_string(),
+                                    "natural",
+                                    None,
+                                    Some(&serde_json::json!({"ack_ms": ack_ms})),
+                                )
+                                .await;
+                            }
+                            Err(e) => {
+                                warn!(?e, "antrean penuh/ditutup");
+                                let _ = bot
+                                    .send_message(ChatId(chat_id), "[!] Sistem sibuk - coba lagi.")
+                                    .await;
+                            }
+                        }
+                    }
                 }
                 respond(())
             }
@@ -698,6 +1153,15 @@ mod tests {
             db,
             policy_state,
             rpc: None,
+            vault: None,
+            account_store: None,
+            profile_root: dir.path().join("profiles").display().to_string(),
+            portfolio: tokio::sync::Mutex::new(nft_trader::Portfolio::new()),
+            rules: tokio::sync::Mutex::new(nft_trader::rules::parse_rules("").unwrap()),
+            models: None,
+            llm: None,
+            draft_sessions: crate::nlcommand::DraftSessions::new(),
+            skills_dir: dir.path().join("skills").display().to_string(),
         });
         (st, dir)
     }
@@ -750,7 +1214,9 @@ mod tests {
     async fn perintah_tidak_dikenali_diabaikan() {
         let (st, _dir) = state().await;
         let m = msg(123456789, "halo biasa");
-        assert!(handle_message(&st, &m).await.is_none());
+        // Bahasa natural ( Fase 9 ): pesan non-perintah dari whitelist
+        // masuk antrean sebagai "natural".
+        assert!(handle_message(&st, &m).await.is_some());
         let m2 = msg(123456789, "/tidak-ada");
         assert!(handle_message(&st, &m2).await.is_none());
     }

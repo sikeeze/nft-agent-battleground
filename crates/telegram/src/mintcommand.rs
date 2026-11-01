@@ -117,15 +117,22 @@ pub async fn run_preflight(
     nonces: &nft_chain::NonceManager,
     policy: &PolicyConfig,
 ) -> PreflightReport {
-    preflight(plan, pool, nonces, policy, &PreflightConfig::default())
-        .await
-        .unwrap_or_else(|e| PreflightReport {
-            checks: vec![nft_preflight::Check::fail(
-                "Preflight",
-                format!("error: {e}"),
-            )],
-            passed: false,
-        })
+    preflight(
+        plan,
+        pool,
+        nonces,
+        policy,
+        &PreflightConfig::default(),
+        None,
+    )
+    .await
+    .unwrap_or_else(|e| PreflightReport {
+        checks: vec![nft_preflight::Check::fail(
+            "Preflight",
+            format!("error: {e}"),
+        )],
+        passed: false,
+    })
 }
 
 #[cfg(test)]

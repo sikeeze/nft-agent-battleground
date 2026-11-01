@@ -362,6 +362,7 @@ async fn acceptance_fase6_preflight_merah_mencegah_war() {
         &nonces,
         &policy_config(),
         &PreflightConfig::default(),
+        None,
     )
     .await
     .unwrap();

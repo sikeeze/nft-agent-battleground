@@ -17,6 +17,7 @@ pub const AGENT_FILE: &str = "agent.toml";
 pub const POLICY_FILE: &str = "policy.toml";
 pub const MODELS_FILE: &str = "models.toml";
 pub const CHAIN_FILE: &str = "chain.toml";
+pub const RULES_FILE: &str = "rules.toml";
 
 /// Template WhatsApp utility yang wajib terdaftar bila WhatsApp aktif (§3C poin 3).
 const REQUIRED_WHATSAPP_TEMPLATES: [&str; 7] = [

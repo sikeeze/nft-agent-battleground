@@ -1,0 +1,17 @@
+# gas_optimizer S skill contoh (blueprint SF8)
+# Baca harga gas & sarankan tier gas ( normal/fast/aggressive ).
+# Skill ini hanya membaca; tidak memanggil tool apapun
+# (allowed_tools kosong = deny-all, SF8 permission eksplisit).
+
+name = "gas_optimizer"
+description = "Sarankan tier gas berdasarkan harga gas saat ini"
+version = "1"
+timeout_secs = 3
+script = "run.js"
+interpreter = "node"
+
+[permissions]
+allowed_tools = []
+allowed_domains = []
+max_calls_per_hour = 10
+can_propose_intent = false
