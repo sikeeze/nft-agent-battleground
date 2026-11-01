@@ -74,6 +74,9 @@ pub struct BotState {
     pub draft_sessions: crate::nlcommand::DraftSessions,
     /// Folder skill ( Fase 9 §F8 ).
     pub skills_dir: String,
+    /// Scheduler job persisten ( Fase 10 §F9 ). `None` bila belum
+    /// dikonfigurasi — perintah /jobs menolak dengan jelas.
+    pub scheduler: Option<std::sync::Arc<nft_scheduler::Scheduler>>,
 }
 
 /// Rakitan perintah masuk a+' `QueuedCommand` ( atau None bila invalid ).
@@ -123,7 +126,7 @@ pub fn make_natural_command(msg: &Message) -> Option<QueuedCommand> {
 }
 
 /// Daftar perintah yang dikenal ( parse tanpa LLM, §8.2 poin 3 ).
-pub const ENABLED_COMMANDS: [&str; 17] = [
+pub const ENABLED_COMMANDS: [&str; 18] = [
     "/status",
     "/stop",
     "/import",
@@ -141,6 +144,7 @@ pub const ENABLED_COMMANDS: [&str; 17] = [
     "/skills",
     "/yes",
     "/no",
+    "/jobs",
 ];
 
 /// Proses satu pesan masuk ( hot path: validasi + ack + enqueue ).
@@ -744,6 +748,26 @@ pub async fn process_command(state: &BotState, cmd: QueuedCommand) -> CommandRes
         }
         "/yes" => confirm_draft(state, user_id, chat_id, true).await,
         "/no" => confirm_draft(state, user_id, chat_id, false).await,
+        "/jobs" => {
+            // §F9: daftar & kelola job scheduler ( tidak bergantung chat ).
+            let out =
+                crate::jobscommand::jobs_command(cmd.args.as_deref(), state.scheduler.as_deref())
+                    .await;
+            let _ = audit(
+                &state.db,
+                &user_id.to_string(),
+                "/jobs",
+                cmd.args.as_deref(),
+                None,
+            )
+            .await;
+            CommandResult {
+                command: cmd.command,
+                chat_id,
+                text: out.text,
+                silent,
+            }
+        }
         "natural" => {
             // Fase 9 §F6: bahasa natural -> draft rule ( cold path ).
             let Some(text) = cmd.args.as_deref() else {
@@ -1162,6 +1186,7 @@ mod tests {
             llm: None,
             draft_sessions: crate::nlcommand::DraftSessions::new(),
             skills_dir: dir.path().join("skills").display().to_string(),
+            scheduler: None,
         });
         (st, dir)
     }

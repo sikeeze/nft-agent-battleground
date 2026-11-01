@@ -81,6 +81,11 @@ impl Portfolio {
         Self::default()
     }
 
+    /// Daftar posisi ( snapshot untuk API / tampilan ).
+    pub fn positions(&self) -> Vec<PnLEntry> {
+        self.entries.values().cloned().collect()
+    }
+
     fn key(collection: &Address, token_id: &U256) -> String {
         format!("{collection:?}:{token_id}")
     }

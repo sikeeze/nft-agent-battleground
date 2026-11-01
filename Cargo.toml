@@ -91,6 +91,16 @@ totp-rs = { version = "5", features = ["gen_secret", "zeroize"] }
 # untuk normalisasi domain/jalur sebelum handler platform.
 url = "2"
 
+# --- Fase 10 (Hari 45-48): REST API lokal ---
+# axum: REST API lokal (§F10) — bind 127.0.0.1/VPN + Bearer token.
+# Alasan: framework web resmi tokio ecosystem, ringan, kompatibel dengan
+# tower middleware ( Yang dipakai tracing/rate-limit ).
+axum = { version = "0.8", features = ["json"] }
+# tower: middleware layer ( Axum dependency bawaan) — dibutuhkan untuk
+# ServiceBuilder di API ( timeout, compression ).
+tower = "0.5"
+# async-trait sudah ada di atas ( dipakai policy/skills/scheduler ).
+
 # --- Fase 7 (Hari 28-33): social vault & browser worker ---
 # argon2 & chacha20poly1305 & zeroize & chrono & sqlx & tracing sudah ada
 # di atas (dipakai keystore/policy/chain). Tidak ada crate baru di fase ini:

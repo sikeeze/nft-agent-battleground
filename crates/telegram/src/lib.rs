@@ -21,6 +21,7 @@ pub mod bot;
 pub mod confirm;
 pub mod engine;
 pub mod import;
+pub mod jobscommand;
 pub mod llmcommand;
 pub mod mintcommand;
 pub mod nlcommand;

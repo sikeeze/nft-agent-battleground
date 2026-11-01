@@ -1,16 +1,16 @@
-# NEXT_AGENT.md — Instruksi untuk Agent Berikutnya (nft-agent)
+﻿# NEXT_AGENT.md — Instruksi untuk Agent Berikutnya (nft-agent)
 
 > Kamu meneruskan proyek `nft-agent` sesuai `NFT_AGENT_BLUEPRINT_TELEGRAM.md`.
 > Baca file blueprint itu **penuh** dulu — terutama §3 (keamanan), §6 (reliability),
 > §9 (jadwal fase), dan §11 (prompt awal + aturan keras).
 
-## Status proyek (per 2026-11-01, akhir sesi Fase 8)
+## Status proyek (per 2026-11-01, akhir sesi Fase 10)
 
-> **Catatan singkat untuk agent berikutnya**: Fase 1-9 sudah selesai dan
-> hijau. Fase 10 (REST API & Scheduler) adalah target berikutnya —
+> **Catatan singkat untuk agent berikutnya**: Fase 1-10 sudah selesai dan
+> hijau. Fase 11 (Notifikasi WhatsApp) adalah target berikutnya —
 > **wajib minta persetujuan user dulu** sebelum mengerjakannya (aturan keras
-> #10). Semua commit belum dilakukan (working tree bersih di branch
-> `fix/claim-validation`); user belum meminta commit.
+> #10). Commit Fase 9 sudah dilakukan user (7cc2e4d, branch
+> `hotfix/security-patch`); Fase 10 belum di-commit.
 
 ### Lingkungan & cara verifikasi (WAJIB baca)
 
@@ -602,17 +602,71 @@
      `pesan_berbahaya_ditolak` + `skill_output_berbahaya_ditolak`
      ( output skill ). LLM hanya mengusulkan; Policy Engine menyetujui.
 
-## Target berikutnya: Fase 10 (Hari 45-48) — REST API & Scheduler
+### FASE 10 - REST API & Scheduler: SELESAI, semua Acceptance lulus
+
+- **`crates/scheduler`** ( 14 unit test ):
+  - `lib.rs` - scheduler job persisten ( SF9 ): tiga jenis job S
+    **OneShot** ( jalankan sekali pada `run_at` ), **Cron** ( berulang,
+    ekspresi `every:<N><m|h|d>` ), **Event** ( dipicu `trigger_event`
+    untuk block baru / floor turun / listing baru ).
+  - Job disimpan di tabel `jobs` ( SQLite, migrasi idempoten
+    `CREATE TABLE IF NOT EXISTS` ) dan **tetap jalan setelah restart**:
+    `Scheduler::tick` menjalankan job berstatus pending yang
+    `next_run`-nya sudah lewat ( test `job_lewatlangsung_dijalankan_saat_restart` ).
+  - Trait `JobRunner` ( async ) - eksekusi job diimplementasikan di
+    crate agent; scheduler **tidak bergantung pada Telegram** ( S3
+    poin 6 ). Cron dijadwalkan ulang setelah sukses; job gagal ->
+    status `failed`.
+  - `start(tick_secs)` loop background + `shutdown()`.
+- **`crates/api`** ( 18 unit test ):
+  - `lib.rs` - REST API axum ( SF10 ): `/health`, `/openapi.json`,
+    `/api/status`, `/api/rules` ( GET + POST ), `/api/portfolio`,
+    `/api/jobs`, `/api/jobs/oneshot`.
+  - **Bind `127.0.0.1` saja** - `serve()` memakai
+    `SocketAddr::from(([127,0,0,1], port))`, tidak pernah `0.0.0.0`
+    ( SF10 "Hanya bind 127.0.0.1 / lewat VPN" ).
+  - **Bearer token** dari env `NFT_API_TOKEN` ( bukan file config );
+    request tanpa/salah token -> `401` ( test
+    `endpoint_tanpa_token_ditolak_401` ). `check_token` bandingkan
+    panjang dulu sebelum membandingkan isi ( anti timing attack
+    sederhana ).
+  - OpenAPI 3.0 spec di `/openapi.json` ( dokumentasi endpoint ).
+  - ponytail: SSE stream log ( `/api/logs/stream` ) menyusul saat
+    tracing subscriber layer tersedia di crate agent.
+- **Wiring Telegram** ( `crates/telegram/src/jobscommand.rs`, 10 test ):
+  `/jobs` ( daftar ), `/jobs oneshot <nama> <unix-detik>`,
+  `/jobs cron <nama> <every:5m>`, `/jobs cancel <id>`. Masuk
+  `ENABLED_COMMANDS` ( 18 ) + dispatch `process_command` + audit.
+  `BotState.scheduler: Option<Arc<Scheduler>>` ( None -> pesan jelas ).
+- Dep Fase 10 via `[workspace.dependencies]` ( aturan #9 ): crate baru
+  **axum 0.8** + **tower 0.5** ( framework REST API lokal, SF10 S
+  alasan dicatat di root Cargo.toml ). Sisanya memakai crate yang sudah
+  ada ( sqlx, chrono, uuid, async-trait ).
+- **Verifikasi terakhir sukses**: `cargo fmt --all && cargo clippy
+  --all-targets -- -D warnings && RUST_TEST_THREADS=1 cargo test
+  --workspace` -> **510 test hijau** ( ... + 14 scheduler + 18 api ),
+  0 gagal, 0 warning.
+- **Acceptance Fase 10** ( S9 ):
+  1. Job terjadwal tetap jalan setelah restart:
+     `job_lewatlangsung_dijalankan_saat_restart` ( job next_run lewat
+     dijalankan saat scheduler baru dibuat dengan db yang sama ).
+  2. API hanya dapat diakses dari localhost/VPN: `serve()` bind
+     `127.0.0.1` ( hardcoded, tidak bisa di-override ke 0.0.0.0 );
+     Bearer token wajib ( `endpoint_token_salah_ditolak_401` ).
+
+## Target berikutnya: Fase 11 (Hari 49-50) - Notifikasi WhatsApp
 
 Urutan pengerjaan yang disarankan:
 
-1. `crates/scheduler`: cron, one-shot ( mint pada tanggal/jam tertentu ),
-   trigger event ( block baru, floor turun, listing baru ); job tersimpan
-   di SQLite dan tetap jalan setelah restart ( §F9 ).
-2. `crates/api`: axum REST + auth Bearer + OpenAPI + SSE; hanya bind
-   `127.0.0.1` / lewat VPN ( Tailscale ), §F10.
-3. Acceptance Fase 10 ( blueprint §9 ): job terjadwal tetap jalan setelah
-   restart; API hanya dapat diakses dari localhost/VPN.
+1. `crates/notify`: router dengan prioritas, dedupe, quiet hours,
+   fallback ke Telegram, antrean async non-blocking ( SF11 ).
+2. `crates/whatsapp`: klien WhatsApp Cloud API ( kirim template,
+   satu arah ), batas per jam dan anggaran bulanan, token dari env (
+   `NFT_API_TOKEN` style, S3C poin 8 ).
+3. Acceptance Fase 11 ( blueprint S9 ): event high/critical sampai di
+   WhatsApp tanpa rahasia; bila WhatsApp error, pesan tetap sampai via
+   Telegram; pengiriman yang di-delay 10 detik tidak memperlambat
+   eksekusi mint; tidak ada port publik/webhook.
 
 ## Checklist Acceptance tiap fase (ringkas, dari §9)
 
@@ -655,7 +709,9 @@ Urutan pengerjaan yang disarankan:
   `sanitize_untrusted` ( input ), `parse_draft` ( draft LLM ),
   `validate_output` ( output skill ). LLM hanya mengusulkan; Policy
   Engine menyetujui. )
-- F10 — job tetap jalan setelah restart; API localhost-only.
+- F10 OK - job tetap jalan setelah restart; API localhost-only.
+  ( `job_lewatlangsung_dijalankan_saat_restart`; `serve()` bind
+  `127.0.0.1` hardcoded + Bearer token `NFT_API_TOKEN` dari env. )
 - F11 — event high/critical sampai WhatsApp tanpa rahasia; fallback Telegram teruji.
 - F12 — target latensi §8.1 tercapai; 100 simulasi war tanpa kegagalan sisi-agent.
 - F13 — audit trail, `cargo audit`, deploy VPS, uji bertahap 3 hari dry-run dulu.

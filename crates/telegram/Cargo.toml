@@ -16,6 +16,7 @@ nft-vault = { path = "../vault", package = "nft-vault" }
 nft-trader = { path = "../trader", package = "nft-trader" }
 nft-llm = { path = "../llm", package = "nft-llm" }
 nft-skills = { path = "../skills", package = "nft-skills" }
+nft-scheduler = { path = "../scheduler", package = "nft-scheduler" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

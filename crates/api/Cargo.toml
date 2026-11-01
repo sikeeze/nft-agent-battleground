@@ -4,3 +4,19 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+nft-core = { path = "../core", package = "nft-core" }
+nft-trader = { path = "../trader", package = "nft-trader" }
+nft-scheduler = { path = "../scheduler", package = "nft-scheduler" }
+axum = { workspace = true }
+tower = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
+chrono = { workspace = true }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+tower = { workspace = true, features = ["util"] }
+async-trait = { workspace = true }
